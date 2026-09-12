@@ -1,0 +1,319 @@
+// xxhbytes.nv — the bridge: `Bytes` in, an `Int` or a `@value` out,
+// and the one-shots every caller actually uses.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THIS IS THE HALF A SERVER GETS.  `xxh32` and `xxh64` speak words and
+// inline arrays and are in the device claim; this module speaks
+// `Bytes` and `Str`, which are heap objects, and is not.
+//
+// THERE IS NO `hash(data, width)` AND THERE WILL NOT BE, which is the
+// package's load-bearing decision and is argued in the README.  Three
+// algorithms, three families of function, three names a caller has to
+// type on purpose — because a format names ONE of them and the wrong
+// one is four plausible bytes that fail on somebody else's machine.
+//
+// THE RANGE FORMS EXIST FOR THE COMPRESSORS.  A frame reader has one
+// scratch buffer and hashes windows of it; `feed32_range` and
+// `feed64_range` hash `n` bytes at `off` without slicing, which is the
+// difference between one allocation and one per block.
+
+use xxh3
+use xxh32
+use xxh64
+
+// ── XXH32 ────────────────────────────────────────────────────────────
+
+// A chunk of input into an XXH32 state.
+//
+// Chunking is invisible: feeding "ab" then "c" and feeding "abc"
+// produce the same state, which the streaming test asserts at every
+// boundary around sixteen.
+//
+// ```novo
+// use std.bytes
+// use xxh32
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh32.total(xxhbytes.feed32(xxh32.start(0), bytes.from_str("abc")))}")
+// ```
+pub fn feed32(st: Xxh32State, chunk: Bytes) -> Xxh32State []
+    todo("xxhash-nv.xxhbytes.feed32")
+
+// `n` bytes at `off` of `chunk` into an XXH32 state.
+//
+// ```novo
+// use std.bytes
+// use xxh32
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh32.total(xxhbytes.feed32_range(xxh32.start(0), bytes.zeros(64), 0, 16))}")
+// ```
+pub fn feed32_range(st: Xxh32State, chunk: Bytes, off: Int, n: Int) -> Xxh32State []
+    todo("xxhash-nv.xxhbytes.feed32_range")
+
+// XXH32 of `data` at `seed`, in one call.
+//
+// THE CALL lz4-nv's `lz4xxh.hash` BECOMES.  Its frame format uses
+// XXH32 three times and each is a different promise: the header
+// checksum is `xxh32.byte_of(hash32(descriptor, 0), 1)`, a block
+// checksum is over the block AS STORED, and the content checksum is
+// over the whole decompressed content.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxhbytes.hash32(bytes.from_str("abc"), 0) != 0}")   // true
+// ```
+pub fn hash32(data: Bytes, seed: Int) -> Int []
+    todo("xxhash-nv.xxhbytes.hash32")
+
+// XXH32 of `n` bytes at `off`, in one call.
+pub fn hash32_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
+    todo("xxhash-nv.xxhbytes.hash32_range")
+
+// A finished XXH32 written into `out` as four LITTLE-endian bytes —
+// the canonical order every format stores.
+//
+// Answers the written prefix, so a caller can pass it straight on.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     match xxhbytes.digest32_into(0x11223344, bytes.zeros(4))
+//         Ok(d) => println(bytes.to_hex(d))                 // 44332211
+//         Err(_) => println("no room")
+// ```
+pub fn digest32_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
+    todo("xxhash-nv.xxhbytes.digest32_into")
+
+// ── XXH64 ────────────────────────────────────────────────────────────
+
+// A chunk of input into an XXH64 state.
+//
+// ```novo
+// use std.bytes
+// use xxh64
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh64.total(xxhbytes.feed64(xxh64.start(0), bytes.from_str("abc")))}")
+// ```
+pub fn feed64(st: Xxh64State, chunk: Bytes) -> Xxh64State []
+    todo("xxhash-nv.xxhbytes.feed64")
+
+// `n` bytes at `off` of `chunk` into an XXH64 state.
+//
+// ```novo
+// use std.bytes
+// use xxh64
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh64.total(xxhbytes.feed64_range(xxh64.start(0), bytes.zeros(64), 0, 32))}")
+// ```
+pub fn feed64_range(st: Xxh64State, chunk: Bytes, off: Int, n: Int) -> Xxh64State []
+    todo("xxhash-nv.xxhbytes.feed64_range")
+
+// XXH64 of `data` at `seed`, in one call.
+//
+// THE CALL zstd-nv's `zstdxxh.hash` BECOMES.  A Zstandard frame's
+// `Content_Checksum` is `xxh64.low32` of this — four bytes, not eight
+// — which is the truncation a reader comparing against `zstd -l` has
+// to do first.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxhbytes.hash64(bytes.from_str("abc"), 0) != 0}")   // true
+// ```
+pub fn hash64(data: Bytes, seed: Int) -> Int []
+    todo("xxhash-nv.xxhbytes.hash64")
+
+// XXH64 of `n` bytes at `off`, in one call.
+pub fn hash64_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
+    todo("xxhash-nv.xxhbytes.hash64_range")
+
+// A finished XXH64 written into `out` as eight LITTLE-endian bytes.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     match xxhbytes.digest64_into(0, bytes.zeros(8))
+//         Ok(d) => println(bytes.to_hex(d))
+//         Err(_) => println("no room")
+// ```
+pub fn digest64_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
+    todo("xxhash-nv.xxhbytes.digest64_into")
+
+// ── XXH3 ─────────────────────────────────────────────────────────────
+
+// XXH3 at 64 bits, unseeded, over the default secret.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxhbytes.hash3_64(bytes.from_str("abc")) != 0}")    // true
+// ```
+pub fn hash3_64(data: Bytes) -> Int []
+    todo("xxhash-nv.xxhbytes.hash3_64")
+
+// XXH3 at 64 bits with a seed, which derives a secret from the default
+// one.
+//
+// A seed of zero is the unseeded hash and is not a special case, the
+// way it is not for XXH32 and XXH64.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxhbytes.hash3_64_seeded(bytes.from_str("abc"), 0) == xxhbytes.hash3_64(bytes.from_str("abc"))}")
+// ```
+pub fn hash3_64_seeded(data: Bytes, seed: Int) -> Int []
+    todo("xxhash-nv.xxhbytes.hash3_64_seeded")
+
+// XXH3 at 64 bits over a caller's secret.
+//
+// Refuses a secret below `xxh3.XXH3_SECRET_BYTES_LEAST`, because the
+// long path would read past its end.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     match xxhbytes.hash3_64_with_secret(bytes.from_str("abc"), bytes.zeros(192))
+//         Ok(h) => println("${h != 0}")
+//         Err(_) => println("secret too short")
+// ```
+pub fn hash3_64_with_secret(data: Bytes, secret: Bytes) -> Result<Int, XxhError> []
+    todo("xxhash-nv.xxhbytes.hash3_64_with_secret")
+
+// XXH3 at 128 bits, unseeded, over the default secret.
+//
+// ```novo
+// use std.bytes
+// use xxh3
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh3.digest_low(xxhbytes.hash3_128(bytes.from_str("abc"))) != 0}")
+// ```
+pub fn hash3_128(data: Bytes) -> Xxh128 []
+    todo("xxhash-nv.xxhbytes.hash3_128")
+
+// XXH3 at 128 bits with a seed.
+//
+// ```novo
+// use std.bytes
+// use xxh3
+// use xxhbytes
+//
+// fn main() [io]
+//     println("${xxh3.digest_high(xxhbytes.hash3_128_seeded(bytes.from_str("abc"), 7)) != 0}")
+// ```
+pub fn hash3_128_seeded(data: Bytes, seed: Int) -> Xxh128 []
+    todo("xxhash-nv.xxhbytes.hash3_128_seeded")
+
+// XXH3 at 128 bits over a caller's secret.
+//
+// Answers the digest's canonical sixteen bytes into `out` rather than
+// the `@value`, because a `@value` may not be a `Result` payload
+// (SPEC § 14.5) and this is the fallible form.  `xxh3.check_secret`
+// first, then `hash3_128`, is the shape for a caller who wants the
+// pair of integers.
+//
+// ```novo
+// use std.bytes
+// use xxhbytes
+//
+// fn main() [io]
+//     match xxhbytes.hash3_128_with_secret_into(bytes.from_str("abc"), bytes.zeros(192), bytes.zeros(16))
+//         Ok(d) => println("${bytes.len(d)}")               // 16
+//         Err(_) => println("secret too short")
+// ```
+pub fn hash3_128_with_secret_into(data: Bytes, secret: Bytes,
+                                  out: Bytes) -> Result<Bytes, XxhError> []
+    todo("xxhash-nv.xxhbytes.hash3_128_with_secret_into")
+
+// A 128-bit digest written into `out` in canonical order: the low half
+// first, each half little-endian.
+//
+// ```novo
+// use std.bytes
+// use xxh3
+// use xxhbytes
+//
+// fn main() [io]
+//     match xxhbytes.digest128_into(xxh3.digest128(0x11, 0x22), bytes.zeros(16))
+//         Ok(d) => println(bytes.to_hex(d))
+//         Err(_) => println("no room")
+// ```
+pub fn digest128_into(d: Xxh128, out: Bytes) -> Result<Bytes, XxhError> []
+    todo("xxhash-nv.xxhbytes.digest128_into")
+
+// ── Printing ─────────────────────────────────────────────────────────
+
+// A 32-bit digest as eight lowercase hexadecimal characters.
+//
+// The form `xxhsum` prints, which is what a caller comparing against
+// the reference tool needs.
+//
+// ```novo
+// use xxhbytes
+//
+// fn main() [io]
+//     println(xxhbytes.text32(0x02cc5d05))                  // 02cc5d05
+// ```
+pub fn text32(h: Int) -> Str []
+    todo("xxhash-nv.xxhbytes.text32")
+
+// A 64-bit digest as sixteen lowercase hexadecimal characters,
+// UNSIGNED.
+//
+// `Int` is signed and three of XXH64's five primes have their high bit
+// set, so a digest is very often a negative number — and printing it
+// with `${h}` gives a minus sign and a number no other tool has ever
+// produced.  This is the function that answers what `xxhsum` prints.
+//
+// ```novo
+// use xxhbytes
+//
+// fn main() [io]
+//     println(xxhbytes.text64(-1))                          // ffffffffffffffff
+// ```
+pub fn text64(h: Int) -> Str []
+    todo("xxhash-nv.xxhbytes.text64")
+
+// A 128-bit digest as thirty-two lowercase hexadecimal characters,
+// HIGH half first.
+//
+// High first, which is the opposite of the canonical BYTE order and is
+// what `xxhsum` prints — the same disagreement every 128-bit hash's
+// tooling has, spelled out here rather than left to surprise someone
+// comparing a string against a buffer.
+//
+// ```novo
+// use xxh3
+// use xxhbytes
+//
+// fn main() [io]
+//     println(xxhbytes.text128(xxh3.digest128(0, 0)))
+// ```
+pub fn text128(d: Xxh128) -> Str []
+    todo("xxhash-nv.xxhbytes.text128")

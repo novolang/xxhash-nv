@@ -1,0 +1,230 @@
+// xxhbytes_tests.nv — the digests, and the exact calls zstd-nv and
+// lz4-nv delete a module for.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: xxhash-nv.<module>.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THE VECTORS ARE THE REFERENCE IMPLEMENTATION'S.  xxHash has no
+// standards document for XXH3 — the project's own source IS the
+// definition, with the output guaranteed stable since v0.8.0 — so the
+// oracle is `Cyan4973/xxHash` and the vectors below are the
+// empty-input digest at each of the four widths, which is the value
+// every port prints first and the one every implementation agrees on
+// before it agrees on anything else.
+//
+// THE REST OF THE REFERENCE'S SANITY TABLE IS NOT TRANSCRIBED HERE,
+// and that is deliberate.  `xsum_sanity_check` hashes prefixes of a
+// 2367-byte buffer produced by its own PRNG, at several seeds, and the
+// table is over a hundred values; copying that many numbers by hand is
+// how a wrong constant gets published, and a wrong constant in a test
+// file is worse than a missing one — it sends an implementer looking
+// for a bug in correct code.  The implementation lane generates the
+// table from the reference binary and commits it here as its first
+// step.  What IS asserted below without a table is every structural
+// property: chunking invisibility, seed sensitivity, the length paths,
+// and the two consumers' exact calls.
+//
+// THEY ARE COMPARED AS TEXT, not as `Int`s: three of XXH64's five
+// primes have their high bit set, so a digest is very often a negative
+// number and a decimal literal would be unreadable and easy to get
+// wrong.  `text64` answers exactly what `xxhsum` prints.
+
+use std.bytes
+use std.test
+use xxh3
+use xxh32
+use xxh64
+use xxhbytes
+
+// XXH32 of the empty input at seed 0.
+const XXH32_EMPTY: Str = "02cc5d05"
+
+// XXH64 of the empty input at seed 0.
+const XXH64_EMPTY: Str = "ef46db3751d8e999"
+
+// XXH3-64 of the empty input, default secret, no seed.
+const XXH3_64_EMPTY: Str = "2d06800538d394c2"
+
+// XXH3-128 of the empty input, default secret, no seed, printed the
+// way `xxhsum` prints it: HIGH half first.
+const XXH3_128_EMPTY: Str = "99aa06d3014798d86001c324468d497f"
+
+@test
+fn test_the_empty_input_at_all_four_widths() [io]
+    test.case("XXH32 of nothing is 02cc5d05")
+    test.assert_eq(xxhbytes.text32(xxhbytes.hash32(bytes.zeros(0), 0)), XXH32_EMPTY)
+
+    test.case("XXH64 of nothing is ef46db3751d8e999")
+    test.assert_eq(xxhbytes.text64(xxhbytes.hash64(bytes.zeros(0), 0)), XXH64_EMPTY)
+
+    test.case("XXH3-64 of nothing is 2d06800538d394c2")
+    test.assert_eq(xxhbytes.text64(xxhbytes.hash3_64(bytes.zeros(0))), XXH3_64_EMPTY)
+
+    test.case("XXH3-128 of nothing is 99aa06d3014798d86001c324468d497f")
+    test.assert_eq(xxhbytes.text128(xxhbytes.hash3_128(bytes.zeros(0))), XXH3_128_EMPTY)
+
+@test
+fn test_the_four_are_four_algorithms_and_not_four_widths() [io]
+    test.case("the same bytes at four widths are four unrelated numbers")
+    // The package's load-bearing decision, asserted: there is no
+    // `hash(data, width)` because a format names ONE of these, and
+    // computing another produces plausible bytes that fail on somebody
+    // else's machine.
+    let d = bytes.from_str("the quick brown fox")
+    test.assert(xxhbytes.text32(xxhbytes.hash32(d, 0)) != XXH32_EMPTY)
+    test.assert(xxhbytes.text64(xxhbytes.hash64(d, 0)) != XXH64_EMPTY)
+    test.assert(xxhbytes.text64(xxhbytes.hash64(d, 0)) != xxhbytes.text64(xxhbytes.hash3_64(d)))
+
+    test.case("and XXH64 truncated to 32 bits is NOT XXH32 of the same bytes")
+    // The mistake the two compressors' formats make reachable: a
+    // Zstandard trailer is XXH64's low half and an LZ4 trailer is
+    // XXH32, both four bytes over the same content.
+    test.assert(xxh64.low32(xxhbytes.hash64(d, 0)) != xxhbytes.hash32(d, 0))
+
+@test
+fn test_the_seed_changes_the_answer_and_zero_is_not_special() [io]
+    test.case("a seeded XXH32 differs from an unseeded one")
+    let d = bytes.from_str("abc")
+    test.assert(xxhbytes.hash32(d, 1) != xxhbytes.hash32(d, 0))
+    test.assert(xxhbytes.hash64(d, 1) != xxhbytes.hash64(d, 0))
+
+    test.case("a seed of zero is the ordinary hash at every width")
+    test.assert_eq(xxhbytes.hash3_64_seeded(d, 0), xxhbytes.hash3_64(d))
+    test.assert_eq(xxh3.digest_low(xxhbytes.hash3_128_seeded(d, 0)),
+                   xxh3.digest_low(xxhbytes.hash3_128(d)))
+
+@test
+fn test_chunking_is_invisible() [io]
+    test.case("a, then bc, is abc — at XXH32")
+    var a = xxhbytes.feed32(xxh32.start(0), bytes.from_str("a"))
+    a = xxhbytes.feed32(a, bytes.from_str("bc"))
+    test.assert_eq(xxh32.finish(a), xxhbytes.hash32(bytes.from_str("abc"), 0))
+
+    test.case("and at XXH64")
+    var b = xxhbytes.feed64(xxh64.start(0), bytes.from_str("a"))
+    b = xxhbytes.feed64(b, bytes.from_str("bc"))
+    test.assert_eq(xxh64.finish(b), xxhbytes.hash64(bytes.from_str("abc"), 0))
+
+    test.case("across a stripe boundary, which is where a buffering bug lives")
+    // Sixteen for XXH32, thirty-two for XXH64: the lengths at which a
+    // stripe fills mid-chunk.
+    let long = bytes.zeros(40)
+    var c = xxhbytes.feed32_range(xxh32.start(0), long, 0, 15)
+    c = xxhbytes.feed32_range(c, long, 15, 25)
+    test.assert_eq(xxh32.finish(c), xxhbytes.hash32(long, 0))
+    var e = xxhbytes.feed64_range(xxh64.start(0), long, 0, 31)
+    e = xxhbytes.feed64_range(e, long, 31, 9)
+    test.assert_eq(xxh64.finish(e), xxhbytes.hash64(long, 0))
+
+    test.case("and a range of a bigger buffer hashes the same as the slice")
+    let padded = bytes.concat([bytes.zeros(2), bytes.from_str("abc"), bytes.zeros(2)])
+    test.assert_eq(xxhbytes.hash32_range(padded, 2, 3, 0), xxhbytes.hash32(bytes.from_str("abc"), 0))
+    test.assert_eq(xxhbytes.hash64_range(padded, 2, 3, 0), xxhbytes.hash64(bytes.from_str("abc"), 0))
+
+@test
+fn test_the_xxh3_length_paths_are_all_reached() [io]
+    test.case("one input per path, so a differential run covers four and not three")
+    // The boundaries are 16, 128 and 240.  Nothing here asserts a
+    // value — the reference's table does that — but every path is
+    // named and exercised so a coverage claim is checkable.
+    test.assert_eq(xxh3.path_for(bytes.len(bytes.zeros(16))), 0)
+    test.assert(xxhbytes.hash3_64(bytes.zeros(16)) != xxhbytes.hash3_64(bytes.zeros(17)))
+    test.assert_eq(xxh3.path_for(bytes.len(bytes.zeros(17))), 1)
+    test.assert_eq(xxh3.path_for(bytes.len(bytes.zeros(129))), 2)
+    test.assert_eq(xxh3.path_for(bytes.len(bytes.zeros(241))), 3)
+    test.assert(xxhbytes.hash3_64(bytes.zeros(240)) != xxhbytes.hash3_64(bytes.zeros(241)))
+
+    test.case("a custom secret at the default width is accepted")
+    match xxhbytes.hash3_64_with_secret(bytes.from_str("abc"), bytes.zeros(192))
+        Ok(h)  => test.assert(h != 0)
+        Err(_) => test.assert(false)
+
+    test.case("and a short one is refused")
+    match xxhbytes.hash3_64_with_secret(bytes.from_str("abc"), bytes.zeros(64))
+        Ok(_)  => test.assert(false)
+        Err(_) => test.assert(true)
+
+    test.case("the 128-bit custom-secret form writes sixteen canonical bytes")
+    match xxhbytes.hash3_128_with_secret_into(bytes.from_str("abc"), bytes.zeros(192), bytes.zeros(16))
+        Ok(d)  => test.assert_eq(bytes.len(d), 16)
+        Err(_) => test.assert(false)
+
+    test.case("and refuses an output buffer with no room")
+    match xxhbytes.hash3_128_with_secret_into(bytes.from_str("abc"), bytes.zeros(192), bytes.zeros(8))
+        Ok(_)  => test.assert(false)
+        Err(_) => test.assert(true)
+
+@test
+fn test_a_digest_writes_out_in_canonical_order() [io]
+    test.case("XXH32 is four little-endian bytes")
+    match xxhbytes.digest32_into(0x11223344, bytes.zeros(4))
+        Ok(d)  => test.assert_eq(bytes.to_hex(d), "44332211")
+        Err(_) => test.assert(false)
+
+    test.case("XXH64 is eight")
+    match xxhbytes.digest64_into(0x1122334455667788, bytes.zeros(8))
+        Ok(d)  => test.assert_eq(bytes.to_hex(d), "8877665544332211")
+        Err(_) => test.assert(false)
+
+    test.case("XXH3-128 is the LOW half first, each half little-endian")
+    // The opposite of what `text128` prints, which is the
+    // disagreement every 128-bit hash's tooling has and the reason
+    // both are published.
+    match xxhbytes.digest128_into(xxh3.digest128(0x1122334455667788, 0x99aabbccddeeff00), bytes.zeros(16))
+        Ok(d)  => test.assert_eq(bytes.to_hex(d), "887766554433221100ffeeddccbbaa99")
+        Err(_) => test.assert(false)
+
+    test.case("a buffer with no room is refused rather than truncated")
+    match xxhbytes.digest64_into(0, bytes.zeros(4))
+        Ok(_)  => test.assert(false)
+        Err(_) => test.assert(true)
+
+@test
+fn test_the_text_forms_are_unsigned() [io]
+    test.case("a 32-bit digest is eight lowercase hex characters")
+    test.assert_eq(xxhbytes.text32(0x02cc5d05), "02cc5d05")
+    test.assert_eq(xxhbytes.text32(0), "00000000")
+
+    test.case("a 64-bit digest prints UNSIGNED, which plain interpolation would not")
+    // `Int` is signed and three of XXH64's primes have their high bit
+    // set, so a digest is very often negative — printing it directly
+    // gives a minus sign and a number no other tool has produced.
+    test.assert_eq(xxhbytes.text64(-1), "ffffffffffffffff")
+    test.assert_eq(xxhbytes.text64(0), "0000000000000000")
+
+    test.case("and a 128-bit digest prints HIGH half first")
+    test.assert_eq(xxhbytes.text128(xxh3.digest128(0x1122334455667788, 0x99aabbccddeeff00)),
+                   "99aabbccddeeff001122334455667788")
+
+@test
+fn test_the_calls_zstd_nv_and_lz4_nv_replace() [io]
+    test.case("zstd-nv's zstdxxh.hash is xxhbytes.hash64 at seed 0")
+    // zstd-nv 0.0.1 carries a private `zstdxxh` module — `ZstXxh64`,
+    // `start`, `feed`, `finish`, `hash`, `truncate32`,
+    // `as_unsigned_text`, `stripe_bytes` — because nothing on the
+    // registry published the algorithm.  Every one of those has a
+    // call here, so the module deletes at zstd-nv's next version.
+    let d = bytes.from_str("frame content")
+    test.assert_eq(xxhbytes.hash64(d, 0), xxh64.finish(xxhbytes.feed64(xxh64.start(0), d)))
+
+    test.case("its truncate32 is xxh64.low32 and its stripe_bytes is a constant")
+    test.assert_eq(xxh64.low32(xxhbytes.hash64(d, 0)), xxh64.low32(xxhbytes.hash64(d, 0)))
+    test.assert_eq(xxh64.XXH64_STRIPE_BYTES, 32)
+
+    test.case("its as_unsigned_text is xxhbytes.text64")
+    test.assert_eq(bytes.len(bytes.from_str(xxhbytes.text64(xxhbytes.hash64(d, 0)))), 16)
+
+    test.case("lz4-nv's lz4xxh.hash is xxhbytes.hash32 at seed 0")
+    // lz4-nv 0.0.1 carries `lz4xxh` — `Lz4Xxh32`, `start`, `feed`,
+    // `finish`, `hash`, `header_byte`, `as_unsigned_text`,
+    // `stripe_bytes` — for the same reason.
+    test.assert_eq(xxhbytes.hash32(d, 0), xxh32.finish(xxhbytes.feed32(xxh32.start(0), d)))
+
+    test.case("its header_byte is xxh32.byte_of(h, 1) and its stripe_bytes is a constant")
+    test.assert_eq(xxh32.byte_of(xxhbytes.hash32(d, 0), 1),
+                   (xxhbytes.hash32(d, 0) >> 8) & 0xff)
+    test.assert_eq(xxh32.XXH32_STRIPE_BYTES, 16)
+
+    test.case("its as_unsigned_text is xxhbytes.text32")
+    test.assert_eq(bytes.len(bytes.from_str(xxhbytes.text32(xxhbytes.hash32(d, 0)))), 8)

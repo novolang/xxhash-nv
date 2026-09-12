@@ -1,0 +1,106 @@
+// xxh3_tests.nv — XXH3's constants, its four length paths, and its
+// 128-bit digest.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: xxhash-nv.xxh3.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THE DIGEST VECTORS ARE IN `xxhbytes_tests.nv`.  What is here is the
+// boundary arithmetic — the four length paths and the secret's
+// minimum — because those are the numbers an implementer lines up
+// against `Cyan4973/xxHash` first, and because a caller benchmarking
+// XXH3 needs to know that a 16-byte and a 17-byte input run entirely
+// different code.
+
+use std.bytes
+use std.test
+use xxh3
+
+@test
+fn test_the_secret_sizes_are_the_reference_implementations() [io]
+    test.case("the default secret is 192 bytes and a custom one is at least 136")
+    test.assert_eq(xxh3.XXH3_SECRET_BYTES_DEFAULT, 192)
+    test.assert_eq(xxh3.XXH3_SECRET_BYTES_LEAST, 136)
+    test.assert(xxh3.XXH3_SECRET_BYTES_DEFAULT > xxh3.XXH3_SECRET_BYTES_LEAST)
+
+@test
+fn test_the_long_path_geometry() [io]
+    test.case("a stripe is 64 bytes, a block is sixteen stripes, and there are eight lanes")
+    test.assert_eq(xxh3.XXH3_STRIPE_BYTES, 64)
+    test.assert_eq(xxh3.XXH3_STRIPES_PER_BLOCK, 16)
+    test.assert_eq(xxh3.XXH3_ACC_LANES, 8)
+
+    test.case("so a block is 1024 bytes, which is when the secret is scrambled")
+    test.assert_eq(xxh3.XXH3_STRIPE_BYTES * xxh3.XXH3_STRIPES_PER_BLOCK, 1024)
+
+    test.case("the two digest widths")
+    test.assert_eq(xxh3.XXH3_DIGEST_BYTES_64, 8)
+    test.assert_eq(xxh3.XXH3_DIGEST_BYTES_128, 16)
+
+@test
+fn test_the_four_length_paths_are_four_different_functions() [io]
+    test.case("the boundaries are 16, 128 and 240")
+    test.assert_eq(xxh3.XXH3_LEN_SHORT_MOST, 16)
+    test.assert_eq(xxh3.XXH3_LEN_MID_MOST, 128)
+    test.assert_eq(xxh3.XXH3_LEN_MID128_MOST, 240)
+
+    test.case("path_for names which one an input runs")
+    // 0 short, 1 midsize, 2 midsize-128, 3 long.  Asserted at every
+    // boundary and one past it, because a differential test that
+    // covers three paths and reports four is the failure this is here
+    // to prevent.
+    test.assert_eq(xxh3.path_for(0), 0)
+    test.assert_eq(xxh3.path_for(16), 0)
+    test.assert_eq(xxh3.path_for(17), 1)
+    test.assert_eq(xxh3.path_for(128), 1)
+    test.assert_eq(xxh3.path_for(129), 2)
+    test.assert_eq(xxh3.path_for(240), 2)
+    test.assert_eq(xxh3.path_for(241), 3)
+    test.assert_eq(xxh3.path_for(100000), 3)
+
+@test
+fn test_a_128_bit_digest_is_two_integers() [io]
+    test.case("the halves read back")
+    let d = xxh3.digest128(0x1122334455667788, 0x99aabbccddeeff00)
+    test.assert_eq(xxh3.digest_low(d), 0x1122334455667788)
+    test.assert_eq(xxh3.digest_high(d), 0x99aabbccddeeff00)
+
+    test.case("the canonical byte order is low half first, each half little-endian")
+    // The one thing about XXH3 a reader cannot infer, and what a
+    // program writing a digest into a format needs.
+    test.assert_eq(xxh3.digest_byte(d, 0), 0x88)
+    test.assert_eq(xxh3.digest_byte(d, 7), 0x11)
+    test.assert_eq(xxh3.digest_byte(d, 8), 0x00)
+    test.assert_eq(xxh3.digest_byte(d, 15), 0x99)
+
+@test
+fn test_the_accumulator_bank_is_public_and_seeded_from_the_secret() [io]
+    test.case("a fresh bank is not eight zeros")
+    // The lanes start from the reference's initial accumulator array,
+    // not from zero — a port that zeroed them produces a plausible
+    // hash that agrees with nothing.
+    let st = xxh3.acc_start()
+    test.assert(xxh3.acc_lane(st, 0) != 0)
+    test.assert(xxh3.acc_lane(st, 7) != 0)
+    test.assert_eq(xxh3.stripe(st), 0)
+    test.assert_eq(xxh3.total(st), 0)
+
+    test.case("a lane can be set, which a differential test against the reference needs")
+    test.assert_eq(xxh3.acc_lane(xxh3.with_acc_lane(st, 3, 99), 3), 99)
+
+@test
+fn test_a_short_secret_is_refused() [io]
+    test.case("below 136 bytes the long path would read past the secret's end")
+    match xxh3.check_secret(bytes.zeros(135))
+        Some(_) => test.assert(true)
+        None    => test.assert(false)
+
+    test.case("at exactly 136 it is accepted")
+    match xxh3.check_secret(bytes.zeros(136))
+        Some(_) => test.assert(false)
+        None    => test.assert(true)
+
+    test.case("and so is the default width")
+    match xxh3.check_secret(bytes.zeros(192))
+        Some(_) => test.assert(false)
+        None    => test.assert(true)

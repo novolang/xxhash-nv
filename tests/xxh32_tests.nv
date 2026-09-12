@@ -1,0 +1,157 @@
+// xxh32_tests.nv — XXH32's word algebra, against the reference
+// implementation's own constants.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: xxhash-nv.xxh32.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THE DIGEST VECTORS ARE IN `xxhbytes_tests.nv`, because a digest of
+// anything but the empty input needs a `Bytes` and this module has
+// none.  What is here is the structure: the primes, the widths, the
+// masking, the stripe rule and the short-input branch — which is what
+// tells an implementer WHICH line is wrong when a digest disagrees.
+
+use std.test
+use xxh32
+
+@test
+fn test_the_widths_are_xxh32s_and_not_xxh64s() [io]
+    test.case("a stripe is SIXTEEN bytes, four lanes of four")
+    test.assert_eq(xxh32.XXH32_STRIPE_BYTES, 16)
+    test.assert_eq(xxh32.XXH32_LANES, 4)
+    test.assert_eq(xxh32.XXH32_DIGEST_BYTES, 4)
+    test.assert_eq(xxh32.XXH32_WORD_MASK, 0xffffffff)
+
+@test
+fn test_the_five_primes_are_the_reference_implementations() [io]
+    test.case("0x9E3779B1, 0x85EBCA77, 0xC2B2AE3D, 0x27D4EB2F, 0x165667B1")
+    test.assert_eq(xxh32.XXH32_PRIME_1, 0x9E3779B1)
+    test.assert_eq(xxh32.XXH32_PRIME_2, 0x85EBCA77)
+    test.assert_eq(xxh32.XXH32_PRIME_3, 0xC2B2AE3D)
+    test.assert_eq(xxh32.XXH32_PRIME_4, 0x27D4EB2F)
+    test.assert_eq(xxh32.XXH32_PRIME_5, 0x165667B1)
+
+    test.case("all five fit in 32 bits, which is what tells them from XXH64's")
+    test.assert_eq(xxh32.mask(xxh32.XXH32_PRIME_1), xxh32.XXH32_PRIME_1)
+    test.assert_eq(xxh32.mask(xxh32.XXH32_PRIME_3), xxh32.XXH32_PRIME_3)
+
+@test
+fn test_the_word_arithmetic_is_32_bit() [io]
+    test.case("mask drops everything above bit 31")
+    test.assert_eq(xxh32.mask(0x1ffffffff), 0xffffffff)
+    test.assert_eq(xxh32.mask(0x100000000), 0)
+    test.assert_eq(xxh32.mask(-1), 0xffffffff)
+
+    test.case("rotl is a LEFT rotate over 32 and not over 64")
+    // The defect that produces plausible values and diverges later: a
+    // 64-bit rotate here gives 0x8000000000000000, which masks to 0.
+    test.assert_eq(xxh32.rotl(1, 31), 0x80000000)
+    test.assert_eq(xxh32.rotl(0x80000000, 1), 1)
+    test.assert_eq(xxh32.rotl(0x12345678, 32), 0x12345678)
+    test.assert_eq(xxh32.rotl(xxh32.rotl(0x12345678, 13), 19), 0x12345678)
+
+@test
+fn test_the_round_and_the_avalanche_stay_in_range() [io]
+    test.case("a round of zero into zero is zero")
+    test.assert_eq(xxh32.round(0, 0), 0)
+
+    test.case("and a round of anything else is masked")
+    let r = xxh32.round(1, 0x11223344)
+    test.assert_eq(xxh32.mask(r), r)
+    test.assert(r != 0)
+
+    test.case("the avalanche is a fixed point at zero and moves everything else")
+    test.assert_eq(xxh32.avalanche(0), 0)
+    test.assert(xxh32.avalanche(1) != 1)
+    test.assert_eq(xxh32.mask(xxh32.avalanche(0x11223344)), xxh32.avalanche(0x11223344))
+
+@test
+fn test_a_fresh_state_seeds_its_four_lanes() [io]
+    test.case("the lanes are seed + P1 + P2, seed + P2, seed, seed - P1")
+    let st = xxh32.start(0)
+    test.assert_eq(xxh32.lane(st, 0), xxh32.mask(xxh32.XXH32_PRIME_1 + xxh32.XXH32_PRIME_2))
+    test.assert_eq(xxh32.lane(st, 1), xxh32.XXH32_PRIME_2)
+    test.assert_eq(xxh32.lane(st, 2), 0)
+    test.assert_eq(xxh32.lane(st, 3), xxh32.mask(0 - xxh32.XXH32_PRIME_1))
+
+    test.case("and a seed moves all four")
+    let s7 = xxh32.start(7)
+    test.assert_eq(xxh32.seed(s7), 7)
+    test.assert_eq(xxh32.lane(s7, 2), 7)
+    test.assert(xxh32.lane(s7, 0) != xxh32.lane(st, 0))
+
+    test.case("a fresh state has fed nothing")
+    test.assert_eq(xxh32.total(st), 0)
+    test.assert_eq(xxh32.buffered(st), 0)
+
+    test.case("a lane can be set, which is what resuming from a checkpoint needs")
+    test.assert_eq(xxh32.lane(xxh32.with_lane(st, 1, 99), 1), 99)
+
+@test
+fn test_the_stripe_is_consumed_as_soon_as_it_fills() [io]
+    test.case("fifteen bytes stay buffered")
+    let st = feed_n(xxh32.start(0), 0x61, 15)
+    test.assert_eq(xxh32.buffered(st), 15)
+    test.assert_eq(xxh32.total(st), 15)
+
+    test.case("the sixteenth folds the stripe and empties the buffer")
+    // XXH32 has NO lazy-buffering rule — unlike BLAKE2, the length is
+    // mixed in at the end and the last stripe is not special, so a
+    // full stripe is folded the moment it is full.
+    let full = xxh32.feed_byte(st, 0x61)
+    test.assert_eq(xxh32.buffered(full), 0)
+    test.assert_eq(xxh32.total(full), 16)
+    test.assert(xxh32.lane(full, 0) != xxh32.lane(xxh32.start(0), 0))
+
+    test.case("the buffer reads back byte by byte")
+    var b = xxh32.start(0)
+    b = xxh32.feed_byte(b, 0x11)
+    b = xxh32.feed_byte(b, 0x22)
+    test.assert_eq(xxh32.buffer_byte(b, 0), 0x11)
+    test.assert_eq(xxh32.buffer_byte(b, 1), 0x22)
+
+// `n` copies of `b`, fed one at a time.  A recursion rather than an
+// index loop because there is no list here to walk — this is a
+// device's read-a-byte loop, written the way the package expects it.
+fn feed_n(st: Xxh32State, b: Int, n: Int) -> Xxh32State
+    if n <= 0
+        st
+    else
+        feed_n(xxh32.feed_byte(st, b), b, n - 1)
+
+@test
+fn test_finish_is_a_pure_read() [io]
+    test.case("finishing does not consume, so a caller can report and keep feeding")
+    // The shape a compressor emitting a per-block checksum AND a
+    // whole-content checksum needs.
+    let st = feed_n(xxh32.start(0), 0x61, 20)
+    let h = xxh32.finish(st)
+    test.assert_eq(xxh32.total(st), 20)
+    test.assert_eq(xxh32.finish(st), h)
+    test.assert(xxh32.finish(xxh32.feed_byte(st, 0x61)) != h)
+
+    test.case("the digest is inside 32 bits")
+    test.assert_eq(xxh32.mask(h), h)
+
+    test.case("below one stripe the lanes are never touched")
+    // The branch a port forgets: an input shorter than sixteen bytes
+    // starts from seed + PRIME_5 rather than from the merged lanes.
+    let short = feed_n(xxh32.start(0), 0x61, 3)
+    test.assert_eq(xxh32.buffered(short), 3)
+    test.assert(xxh32.finish(short) != xxh32.finish(feed_n(xxh32.start(0), 0x61, 19)))
+
+    test.case("and the seed changes the answer")
+    test.assert(xxh32.finish(feed_n(xxh32.start(1), 0x61, 3)) != xxh32.finish(short))
+
+@test
+fn test_a_digest_reads_out_little_endian() [io]
+    test.case("byte 0 is the low byte")
+    test.assert_eq(xxh32.byte_of(0x11223344, 0), 0x44)
+    test.assert_eq(xxh32.byte_of(0x11223344, 1), 0x33)
+    test.assert_eq(xxh32.byte_of(0x11223344, 2), 0x22)
+    test.assert_eq(xxh32.byte_of(0x11223344, 3), 0x11)
+
+    test.case("byte 1 is the one an LZ4 frame header stores")
+    // lz4-nv's `lz4xxh.header_byte` is exactly this, and naming the
+    // index here is what stops the next reader rediscovering it.
+    test.assert_eq(xxh32.byte_of(0x02cc5d05, 1), 0x5d)

@@ -1,0 +1,164 @@
+// embedded_probe.nv — this package's device claim, as a program that
+// either builds for a Cortex-M or does not.
+//
+// It is not a test.  `scripts/shard_audit.sh`'s `core-embedded` row
+// copies it and the modules it names into a package of its own and
+// runs
+//
+//   novo build --target=nrf52-qemu src/probe.nv
+//
+// which produces a real Cortex-M4 ELF or fails.
+//
+// WHAT THE CLAIM COVERS: `xxh32` and `xxh64` — and what it covers is
+// two WHOLE hashes, not fragments.  `start`, `feed_byte` and `finish`
+// with no allocator behind them, so a bootloader verifying an LZ4 or
+// Zstandard payload in flash reads a byte, feeds it, and compares four
+// bytes at the end.
+//
+// THE DEVICE THIS IS FOR IS REAL AND IS NAMED IN THE PLAN.  lz4-nv's
+// row says its block decoder is what a bootloader runs, and its frame
+// format checks three XXH32s — a header byte, a per-block checksum and
+// a content checksum.  A bootloader that can decompress and cannot
+// check the checksum has verified nothing.  zstd-nv is the same
+// argument at XXH64.
+//
+// WHY A BYTE AT A TIME.  A `Bytes` chunk is a heap object; a byte is a
+// register.  The state already holds its own stripe buffer as four
+// inline words, so feeding a byte costs a masked store and a compare,
+// and the stripe fold happens inside `feed_byte` when the sixteenth
+// (or thirty-second) byte lands.
+//
+// WHAT IS NOT CLAIMED.  `xxhbytes` speaks `Bytes` and `Str`, and
+// `xxh3` is deliberately outside: XXH3's accumulator layout exists to
+// be eight lanes of SIMD, and on a Cortex-M4 its scalar path is slower
+// than XXH32 while costing ~256 bytes more of state and secret.  A
+// device that wants a checksum wants `xxh32`, and the README says so.
+//
+// WHAT THE TIER ACTUALLY CHECKS AT 0.0.1 is narrower than it will be.
+// Every body under `src/` is a `todo()`, so what links today is the
+// SIGNATURES and the types — `Int` in and out, `@value` structs with
+// inline arrays, and no allocator anywhere in the shape.  There is no
+// arithmetic in the binary yet, so this probe does not prove the round
+// function is allocation-free; it proves that nothing in the shape of
+// the surface needs an allocator or a host.  Keeping it green once the
+// bodies land is a named cost of the implementation step.
+
+use xxh32
+use xxh64
+
+// A seed as a device holds it: a constant in flash, not a value read
+// out of a buffer.
+const SEED: Int = 0x03020100
+
+// Every answer this probe checks, folded into one number so a single
+// comparison decides the run.  A firmware image has one line of
+// output; making it depend on all of them is what stops a passing run
+// from meaning "the first call linked".
+@tier(embedded)
+fn score() -> Int
+    var n = 0
+
+    // ── XXH32, whole ────────────────────────────────────────────
+    if xxh32.XXH32_STRIPE_BYTES == 16
+        n = n + 1
+    if xxh32.XXH32_LANES == 4
+        n = n + 1
+    if xxh32.XXH32_DIGEST_BYTES == 4
+        n = n + 1
+    if xxh32.XXH32_WORD_MASK == 0xffffffff
+        n = n + 1
+    if xxh32.XXH32_PRIME_1 == 2654435761
+        n = n + 1
+    if xxh32.XXH32_PRIME_5 == 374761393
+        n = n + 1
+    var a = xxh32.start(SEED)
+    if xxh32.seed(a) == SEED
+        n = n + 1
+    if xxh32.total(a) == 0
+        n = n + 1
+    if xxh32.buffered(a) == 0
+        n = n + 1
+    // A byte at a time, which is how a bootloader reads flash.
+    a = xxh32.feed_byte(a, 0x61)
+    a = xxh32.feed_byte(a, 0x62)
+    a = xxh32.feed_byte(a, 0x63)
+    if xxh32.total(a) == 3
+        n = n + 1
+    if xxh32.buffer_byte(a, 0) == 0x61
+        n = n + 1
+    if xxh32.finish(a) != 0
+        n = n + 1
+    // The pieces a caller driving the fold itself needs.
+    if xxh32.mask(0x1ffffffff) == 0xffffffff
+        n = n + 1
+    if xxh32.rotl(1, 31) != 0
+        n = n + 1
+    if xxh32.round(0, 0) == 0
+        n = n + 1
+    if xxh32.avalanche(0) == 0
+        n = n + 1
+    if xxh32.lane(a, 0) != 0
+        n = n + 1
+    if xxh32.lane(xxh32.with_lane(a, 0, 5), 0) == 5
+        n = n + 1
+    // The byte a frame header carries.
+    if xxh32.byte_of(0x11223344, 1) == 0x33
+        n = n + 1
+
+    // ── XXH64, whole, at the other stripe width ─────────────────
+    if xxh64.XXH64_STRIPE_BYTES == 32
+        n = n + 1
+    if xxh64.XXH64_LANES == 4
+        n = n + 1
+    if xxh64.XXH64_DIGEST_BYTES == 8
+        n = n + 1
+    if xxh64.XXH64_PRIME_3 == 1609587929392839161
+        n = n + 1
+    if xxh64.XXH64_PRIME_5 == 2870177450012600261
+        n = n + 1
+    var b = xxh64.start(SEED)
+    if xxh64.seed(b) == SEED
+        n = n + 1
+    b = xxh64.feed_byte(b, 0x61)
+    if xxh64.total(b) == 1
+        n = n + 1
+    if xxh64.buffer_byte(b, 0) == 0x61
+        n = n + 1
+    if xxh64.buffered(b) == 1
+        n = n + 1
+    if xxh64.finish(b) != 0
+        n = n + 1
+    if xxh64.rotl(1, 1) == 2
+        n = n + 1
+    if xxh64.round(0, 0) == 0
+        n = n + 1
+    if xxh64.merge_lane(0, 0) == xxh64.XXH64_PRIME_4
+        n = n + 1
+    if xxh64.avalanche(0) == 0
+        n = n + 1
+    if xxh64.lane(b, 0) != 0
+        n = n + 1
+    if xxh64.lane(xxh64.with_lane(b, 0, 5), 0) == 5
+        n = n + 1
+    // The truncation a Zstandard frame trailer stores.
+    if xxh64.low32(0x1122334455667788) == 0x55667788
+        n = n + 1
+    if xxh64.byte_of(0x1122334455667788, 0) == 0x88
+        n = n + 1
+
+    n
+
+@tier(rt)
+fn main() [hw, time]
+    bsp.board.init()
+    // 37 is the number of checks in `score` on the path a linked build
+    // takes.  The count is printed on a failure rather than only
+    // compared, so a device that disagrees with the host says HOW MANY
+    // it lost and a bisect has somewhere to start.
+    let n = score()
+    if n == 37
+        hal.uart.write("PASS: xxhash-embedded\n")
+    else
+        hal.uart.write("FAIL: xxhash-embedded\n")
+    loop
+        core.rt.sleep_ms(1000)

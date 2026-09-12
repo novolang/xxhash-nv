@@ -1,0 +1,137 @@
+// xxh64_tests.nv — XXH64's word algebra, and the five ways it is not
+// XXH32 at double the width.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: xxhash-nv.xxh64.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THREE OF THE FIVE PRIMES HAVE THEIR HIGH BIT SET and `Int` is
+// signed, so they are written here as the decimals the source has to
+// write, with the hexadecimal in a comment beside each.
+
+use std.test
+use xxh64
+
+@test
+fn test_the_widths_are_xxh64s_and_not_xxh32s() [io]
+    test.case("a stripe is THIRTY-TWO bytes, four lanes of eight")
+    test.assert_eq(xxh64.XXH64_STRIPE_BYTES, 32)
+    test.assert_eq(xxh64.XXH64_LANES, 4)
+    test.assert_eq(xxh64.XXH64_DIGEST_BYTES, 8)
+
+@test
+fn test_the_five_primes_are_the_reference_implementations() [io]
+    test.case("the five 64-bit constants, three of them negative as Ints")
+    test.assert_eq(xxh64.XXH64_PRIME_1, -7046029288634856825)   // 0x9E3779B185EBCA87
+    test.assert_eq(xxh64.XXH64_PRIME_2, -4417276706812531889)   // 0xC2B2AE3D27D4EB4F
+    test.assert_eq(xxh64.XXH64_PRIME_3, 0x165667B19E3779F9)
+    test.assert_eq(xxh64.XXH64_PRIME_4, -8796714831421723037)   // 0x85EBCA77C2B2AE63
+    test.assert_eq(xxh64.XXH64_PRIME_5, 0x27D4EB2F165667C5)
+
+    test.case("and they are NOT XXH32's widened")
+    // A port that took XXH32's primes and sign-extended them would
+    // produce five numbers none of which is any of these.
+    test.assert(xxh64.XXH64_PRIME_1 != 0x9E3779B1)
+    test.assert(xxh64.XXH64_PRIME_5 != 0x165667B1)
+
+@test
+fn test_rotl_is_64_bit_here() [io]
+    test.case("rotating over 64, not over 32")
+    test.assert_eq(xxh64.rotl(1, 1), 2)
+    test.assert_eq(xxh64.rotl(1, 63), -9223372036854775808)   // 0x8000000000000000
+    test.assert_eq(xxh64.rotl(0x0123456789abcdef, 64), 0x0123456789abcdef)
+    test.assert_eq(xxh64.rotl(xxh64.rotl(0x0123456789abcdef, 31), 33), 0x0123456789abcdef)
+
+@test
+fn test_the_round_the_merge_and_the_avalanche() [io]
+    test.case("a round of zero into zero is zero")
+    test.assert_eq(xxh64.round(0, 0), 0)
+    test.assert(xxh64.round(1, 1) != 0)
+
+    test.case("the merge applies the round A SECOND TIME, which XXH32 does not")
+    // The difference a reader looking in the round function will not
+    // find: XXH64's merge is (h XOR round(0, lane)) * P1 + P4.
+    test.assert_eq(xxh64.merge_lane(0, 0), xxh64.XXH64_PRIME_4)
+    test.assert(xxh64.merge_lane(0, 1) != xxh64.XXH64_PRIME_4)
+
+    test.case("the avalanche is a fixed point at zero")
+    test.assert_eq(xxh64.avalanche(0), 0)
+    test.assert(xxh64.avalanche(1) != 1)
+
+@test
+fn test_a_fresh_state_seeds_its_four_lanes() [io]
+    test.case("the lanes are seed + P1 + P2, seed + P2, seed, seed - P1")
+    let st = xxh64.start(0)
+    test.assert_eq(xxh64.lane(st, 1), xxh64.XXH64_PRIME_2)
+    test.assert_eq(xxh64.lane(st, 2), 0)
+
+    test.case("a seed moves all four and is readable")
+    let s7 = xxh64.start(7)
+    test.assert_eq(xxh64.seed(s7), 7)
+    test.assert_eq(xxh64.lane(s7, 2), 7)
+    test.assert(xxh64.lane(s7, 0) != xxh64.lane(st, 0))
+
+    test.case("a fresh state has fed nothing")
+    test.assert_eq(xxh64.total(st), 0)
+    test.assert_eq(xxh64.buffered(st), 0)
+
+    test.case("a lane can be set")
+    test.assert_eq(xxh64.lane(xxh64.with_lane(st, 1, 99), 1), 99)
+
+// `n` copies of `b`, fed one at a time — the same recursion the XXH32
+// file uses, at this module's state type.
+fn feed_n(st: Xxh64State, b: Int, n: Int) -> Xxh64State
+    if n <= 0
+        st
+    else
+        feed_n(xxh64.feed_byte(st, b), b, n - 1)
+
+@test
+fn test_the_stripe_is_thirty_two_bytes_and_folds_when_it_fills() [io]
+    test.case("thirty-one bytes stay buffered")
+    let st = feed_n(xxh64.start(0), 0x61, 31)
+    test.assert_eq(xxh64.buffered(st), 31)
+    test.assert_eq(xxh64.total(st), 31)
+
+    test.case("the thirty-second folds the stripe and empties the buffer")
+    let full = xxh64.feed_byte(st, 0x61)
+    test.assert_eq(xxh64.buffered(full), 0)
+    test.assert_eq(xxh64.total(full), 32)
+    test.assert(xxh64.lane(full, 0) != xxh64.lane(xxh64.start(0), 0))
+
+    test.case("the buffer reads back byte by byte")
+    var b = xxh64.start(0)
+    b = xxh64.feed_byte(b, 0x11)
+    b = xxh64.feed_byte(b, 0x22)
+    test.assert_eq(xxh64.buffer_byte(b, 0), 0x11)
+    test.assert_eq(xxh64.buffer_byte(b, 1), 0x22)
+
+@test
+fn test_finish_is_a_pure_read_here_too() [io]
+    test.case("finishing does not consume")
+    let st = feed_n(xxh64.start(0), 0x61, 40)
+    let h = xxh64.finish(st)
+    test.assert_eq(xxh64.total(st), 40)
+    test.assert_eq(xxh64.finish(st), h)
+    test.assert(xxh64.finish(xxh64.feed_byte(st, 0x61)) != h)
+
+    test.case("below one stripe the lanes are never touched")
+    let short = feed_n(xxh64.start(0), 0x61, 3)
+    test.assert(xxh64.finish(short) != xxh64.finish(feed_n(xxh64.start(0), 0x61, 35)))
+
+    test.case("and the seed changes the answer")
+    test.assert(xxh64.finish(feed_n(xxh64.start(1), 0x61, 3)) != xxh64.finish(short))
+
+@test
+fn test_a_digest_reads_out_little_endian_and_truncates_low() [io]
+    test.case("byte 0 is the low byte")
+    test.assert_eq(xxh64.byte_of(0x1122334455667788, 0), 0x88)
+    test.assert_eq(xxh64.byte_of(0x1122334455667788, 7), 0x11)
+
+    test.case("low32 is the four bytes a Zstandard frame trailer stores")
+    // zstd-nv's `zstdxxh.truncate32` is exactly this, and the
+    // truncation is what a reader comparing against `zstd -l` has to
+    // do before the numbers agree.
+    test.assert_eq(xxh64.low32(0x1122334455667788), 0x55667788)
+    test.assert_eq(xxh64.low32(-1), 0xffffffff)
+    test.assert(xxh64.low32(0x1122334455667788) >= 0)

@@ -1,0 +1,67 @@
+// xxherr.nv — one error type, and it is short because a hash cannot
+// fail.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// XXH32 AND XXH64 HAVE NO ERRORS AT ALL, and neither of their modules
+// names this one: every input is a legal input and every state has a
+// digest.  Every arm below belongs to XXH3, which has a custom-secret
+// mode with a minimum length, or to a caller's output buffer.
+//
+// THAT ASYMMETRY IS THE POINT of keeping the errors in their own
+// module: `xxh32` and `xxh64` stay error-free and therefore stay in
+// the device claim, and the type a caller has to handle appears
+// exactly where a caller can get something wrong.
+
+// What a caller can get wrong.
+//
+// The variants are prefixed because a variant is constructed by NAME
+// across the whole assembly.
+pub enum XxhError
+    // A custom XXH3 secret shorter than `xxh3.XXH3_SECRET_BYTES_LEAST`.
+    //
+    // NOT a style rule: XXH3's long-input path reads the secret at
+    // offsets derived from the stripe counter, and a short secret
+    // would be read past its end.  The reference implementation
+    // refuses below 136 bytes and so does this.
+    XxhSecretTooShort(got: Int, least: Int)
+
+    // A caller's output buffer has less room than the digest.
+    XxhOutputTooSmall(want: Int, have: Int)
+
+    // A seed and a custom secret were both supplied.
+    //
+    // They are the same knob.  XXH3 derives a secret FROM a seed, so a
+    // caller who supplies both has asked for two different secrets and
+    // the reference implementation quietly ignores one of them.  This
+    // refuses instead, because the two choices produce different
+    // digests and the caller has not said which they meant.
+    XxhSeedAndSecretBothGiven
+
+// What went wrong, in words, for a caller that logs rather than
+// branches.
+//
+// `Result<_, XxhError>` requires it: SPEC § 3.4 admits a `Result`
+// error type only if it implements `Error`.
+//
+// ```novo
+// use xxherr
+//
+// fn main() [io]
+//     println(xxherr.describe(XxhSecretTooShort(64, 136)))
+// ```
+impl Error for XxhError
+    fn message(self) -> Str
+        todo("xxhash-nv.xxherr.XxhError.message")
+
+// The same sentence as `message`, as a free function.
+//
+// ```novo
+// use xxherr
+//
+// fn main() [io]
+//     println(xxherr.describe(XxhOutputTooSmall(16, 8)))
+// ```
+pub fn describe(e: XxhError) -> Str []
+    todo("xxhash-nv.xxherr.describe")

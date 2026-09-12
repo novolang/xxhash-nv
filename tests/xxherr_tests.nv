@@ -1,0 +1,36 @@
+// xxherr_tests.nv — the error type, which is short because a hash
+// cannot fail.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: xxhash-nv.xxherr.<fn>`.
+// That is the expected result until the bodies land.
+
+use std.test
+use xxherr
+
+@test
+fn test_every_arm_says_something_a_caller_can_act_on() [io]
+    test.case("a description is not empty, and names the numbers")
+    test.assert(xxherr.describe(XxhSecretTooShort(64, 136)) != "")
+    test.assert(xxherr.describe(XxhOutputTooSmall(16, 8)) != "")
+    test.assert(xxherr.describe(XxhSeedAndSecretBothGiven) != "")
+
+    test.case("two different widths do not describe to the same sentence")
+    test.assert(xxherr.describe(XxhOutputTooSmall(16, 8))
+                != xxherr.describe(XxhOutputTooSmall(8, 4)))
+
+@test
+fn test_the_error_trait_answers_what_describe_does() [io]
+    test.case("`message` and `describe` are one sentence")
+    let e = XxhSecretTooShort(64, 136)
+    test.assert_eq(e.message(), xxherr.describe(e))
+
+@test
+fn test_the_arms_are_only_xxh3s_and_the_callers() [io]
+    test.case("there is no arm for a failed hash, because there is no such thing")
+    // XXH32 and XXH64 never name this type: every input is legal and
+    // every state has a digest.  That asymmetry is why the errors live
+    // in their own module — the two word-algebra modules stay
+    // error-free and therefore stay in the device claim.
+    test.assert(xxherr.describe(XxhSeedAndSecretBothGiven) != "")
+    test.assert(xxherr.describe(XxhSecretTooShort(0, 136)) != "")

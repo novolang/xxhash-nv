@@ -1,0 +1,43 @@
+[package]
+name        = "xxhash-nv"
+version     = "0.0.1"
+description = "xxHash for novo-lang: XXH32, XXH64 and XXH3 as three separate types with no shared entry point, because a format names ONE of them and two four-byte checksums over the same bytes are different numbers.  Streaming @value states with one-shot forms, seeds, and XXH3's secret and size-dependent paths declared and scoped.  The copy zstd-nv and lz4-nv each carry privately.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`.  xxHash is multiplication, rotation and XOR over fixed
+# primes.  There is no entropy source, no clock and nothing that opens
+# a file: the seed, the secret and the bytes all arrive as arguments.
+#
+# It carries `tests/embedded_probe.nv`, so the device claim is BUILT.
+# `xxh32` and `xxh64` are the two modules the claim covers — the word
+# algebra with no `Bytes` anywhere in them — and the README says which
+# half a device gets and why XXH3 is not in it.
+layer       = "core"
+
+category    = "compression"
+
+tags        = ["xxhash", "xxh32", "xxh64", "xxh3", "checksum", "hash", "non-cryptographic", "embedded"]
+repository  = "https://github.com/novolang/xxhash-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "The checksum two compressors each carry a copy of"
+
+[dependencies]
+# None, and there is nothing to take one for.  xxHash is five prime
+# constants and integer arithmetic; the only neighbour that looks
+# related is crc-nv, and a CRC is a different family with a different
+# purpose — a CRC detects burst errors on a wire, and xxHash is a
+# non-cryptographic hash chosen for throughput.  The README says which
+# promise each makes so a caller picks on purpose.

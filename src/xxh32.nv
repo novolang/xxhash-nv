@@ -1,0 +1,258 @@
+// xxh32.nv — XXH32, in word algebra with no `Bytes` and no `Str`
+// anywhere in the module.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THIS IS ONE OF THE TWO MODULES A DEVICE GETS, and what it gets is a
+// WHOLE hash: `start`, `feed_byte`, `finish`.  A bootloader checking a
+// firmware image against an LZ4 frame's header byte reads a byte,
+// feeds it, and compares; the arena is untouched and the state is
+// fifty-six bytes of its own frame.
+//
+// XXH32 IS NOT XXH64 AT HALF THE WIDTH, and the README says so at
+// length.  The differences that matter here: a stripe is SIXTEEN bytes
+// rather than thirty-two, the round has one rotation rather than two,
+// the tail is consumed four bytes at a time and then one, and the
+// finalisation constants are different primes.  A port that narrowed
+// XXH64 produces a number nothing agrees with.
+//
+// WORDS ARE 32 BITS AND `Int` IS 64, so every product and every
+// rotation comes back through `mask`.  A missing mask is the defect
+// that produces plausible values and diverges later, and it is why
+// `mask` is public and asserted at the round function.
+//
+// EVERY OPERATION WRAPS.  XXH32 is defined over 32-bit unsigned
+// arithmetic; `Int` traps on overflow (SPEC § 13.2), so the
+// implementation is `std.int`'s wrapping multiply and add throughout
+// and the value this module answers is the reference algorithm's bit
+// pattern in the low 32 bits of a signed `Int`.  `xxhbytes.text32` is
+// how a caller prints one that matches `xxhsum`.
+//
+// THIS IS NOT A CHECKSUM IN THE CRC SENSE AND NOT A CRYPTOGRAPHIC
+// HASH.  It detects accidental corruption very well; an adversary who
+// can choose the bytes can produce a collision in seconds.  Every
+// format that uses it says exactly that much, and so does the README.
+
+// ── Sizes ────────────────────────────────────────────────────────────
+
+// The stripe XXH32 consumes at a time: sixteen bytes, four lanes of
+// four.
+pub const XXH32_STRIPE_BYTES = 16
+
+// The lanes: four.
+pub const XXH32_LANES = 4
+
+// The digest: four bytes.
+pub const XXH32_DIGEST_BYTES = 4
+
+// The mask that keeps a word 32 bits wide: 2^32 - 1.
+pub const XXH32_WORD_MASK = 0xffffffff
+
+// ── The five primes ──────────────────────────────────────────────────
+
+// 0x9E3779B1 — the round multiplier.
+pub const XXH32_PRIME_1 = 2654435761
+
+// 0x85EBCA77 — the round's second multiplier.
+pub const XXH32_PRIME_2 = 2246822519
+
+// 0xC2B2AE3D — the avalanche's first.
+pub const XXH32_PRIME_3 = 3266489917
+
+// 0x27D4EB2F — the tail's four-byte multiplier.
+pub const XXH32_PRIME_4 = 668265263
+
+// 0x165667B1 — the tail's one-byte multiplier, and the seed offset the
+// short-input path starts from.
+pub const XXH32_PRIME_5 = 374761393
+
+// ── The state ────────────────────────────────────────────────────────
+
+// A running XXH32 between bytes.
+//
+// A `@value` struct, so all of it lives in the caller's frame — no
+// cell, no header, no reference count — and `[Int; 4]` inside one is a
+// true inline array (SPEC § 14.4).  Fifty-six bytes of stack is what a
+// device spends to hold an XXH32 in flight.
+//
+// The four lanes are the algorithm's accumulators, seeded from `seed`
+// at the start.  `buf` holds up to fifteen bytes that did not fill a
+// stripe, as four little-endian words.  `total` is every byte fed so
+// far, which the finalisation mixes in and which is why two
+// different-length inputs of the same bytes differ.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.total(xxh32.start(0))}")            // 0
+// ```
+pub @value
+struct Xxh32State
+    // The four accumulators, each masked to 32 bits.
+    v: [Int; 4]
+    // Bytes seen but not yet folded into a lane, as four little-endian
+    // words: byte `j` is bits `8*(j mod 4)` of word `j / 4`.
+    buf: [Int; 4]
+    // Bytes of `buf` that hold input: 0 ..= 15.
+    buffered: Int
+    // Every byte fed so far.
+    total: Int
+    // The seed this state started from.
+    seed: Int
+
+// ── The arithmetic ───────────────────────────────────────────────────
+
+// `x` masked to 32 bits.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.mask(0x1ffffffff)}")
+// ```
+pub fn mask(x: Int) -> Int []
+    todo("xxhash-nv.xxh32.mask")
+
+// `x` rotated LEFT by `n` bits, over 32, masked.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.rotl(1, 31)}")                      // 2147483648
+// ```
+pub fn rotl(x: Int, n: Int) -> Int []
+    todo("xxhash-nv.xxh32.rotl")
+
+// One lane's round: `rotl(acc + input * PRIME_2, 13) * PRIME_1`.
+//
+// Published because it is the function a reader checks first when a
+// digest disagrees, and because the one-lane form is what a device
+// driving the loop itself calls.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.round(0, 0) == 0}")                 // true
+// ```
+pub fn round(acc: Int, input: Int) -> Int []
+    todo("xxhash-nv.xxh32.round")
+
+// The final mix: XOR-shift-multiply three times, which is what turns
+// the merged lanes into a digest with no structure left.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.avalanche(0)}")                     // 0
+// ```
+pub fn avalanche(h: Int) -> Int []
+    todo("xxhash-nv.xxh32.avalanche")
+
+// ── Building and reading a state ─────────────────────────────────────
+
+// A fresh state at this seed.
+//
+// The lanes start at `seed + PRIME_1 + PRIME_2`, `seed + PRIME_2`,
+// `seed`, and `seed - PRIME_1`.  A seed of zero is the ordinary
+// unseeded hash and is not a special case.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.seed(xxh32.start(7))}")             // 7
+// ```
+pub fn start(seed: Int) -> Xxh32State []
+    todo("xxhash-nv.xxh32.start")
+
+// Lane `i`, for `i` in 0 ..= 3.
+pub fn lane(st: Xxh32State, i: Int) -> Int []
+    todo("xxhash-nv.xxh32.lane")
+
+// The same state with lane `i` set.  For a caller resuming from a
+// checkpoint they stored.
+pub fn with_lane(st: Xxh32State, i: Int, v: Int) -> Xxh32State []
+    todo("xxhash-nv.xxh32.with_lane")
+
+// Buffered byte `j`, for `j` in 0 ..= 15.
+pub fn buffer_byte(st: Xxh32State, j: Int) -> Int []
+    todo("xxhash-nv.xxh32.buffer_byte")
+
+// Bytes of the stripe buffer that hold input: 0 ..= 15.
+pub fn buffered(st: Xxh32State) -> Int []
+    todo("xxhash-nv.xxh32.buffered")
+
+// Every byte fed so far.
+pub fn total(st: Xxh32State) -> Int []
+    todo("xxhash-nv.xxh32.total")
+
+// The seed this state started from.
+pub fn seed(st: Xxh32State) -> Int []
+    todo("xxhash-nv.xxh32.seed")
+
+// ── The streaming hash, with no `Bytes` in it ────────────────────────
+
+// One more byte of input.
+//
+// Fills the stripe buffer and, when the sixteenth byte lands, folds
+// all four lanes and empties it.  XXH32 has no lazy-buffering rule —
+// unlike BLAKE2, a full stripe is consumed as soon as it is full,
+// because the length is mixed in at the END and the last stripe is not
+// special.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.total(xxh32.feed_byte(xxh32.start(0), 0x61))}")   // 1
+// ```
+pub fn feed_byte(st: Xxh32State, b: Int) -> Xxh32State []
+    todo("xxhash-nv.xxh32.feed_byte")
+
+// The digest: the lanes merged, the length mixed in, the tail
+// consumed, and the avalanche.
+//
+// A PURE READ — the state is unchanged, so a caller can finish a
+// running hash, report it, and keep feeding.  That is the shape a
+// compressor emitting a per-block checksum and a whole-content
+// checksum needs, and it is why `finish` does not consume.
+//
+// BELOW SIXTEEN BYTES the merge is skipped and the hash starts from
+// `seed + PRIME_5` instead: an input shorter than one stripe never
+// touches the lanes.  That branch is the one a port forgets, and it is
+// why a three-byte input is the first test.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.finish(xxh32.start(0))}")
+// ```
+pub fn finish(st: Xxh32State) -> Int []
+    todo("xxhash-nv.xxh32.finish")
+
+// ── Reading a digest out ─────────────────────────────────────────────
+
+// Byte `i` of a finished digest, for `i` in 0 ..= 3, LITTLE-endian.
+//
+// Little-endian, which is the canonical form every format stores and
+// the half a port gets wrong while the arithmetic is right.
+//
+// ALSO THE CALL lz4-nv's FRAME HEADER NEEDS: the header checksum is
+// `byte_of(h, 1)`, the SECOND byte of the XXH32 of the descriptor —
+// which is `(h >> 8) & 0xff` and is spelled here so nobody has to
+// rediscover which byte.
+//
+// ```novo
+// use xxh32
+//
+// fn main() [io]
+//     println("${xxh32.byte_of(0x11223344, 0)}")           // 68
+// ```
+pub fn byte_of(h: Int, i: Int) -> Int []
+    todo("xxhash-nv.xxh32.byte_of")

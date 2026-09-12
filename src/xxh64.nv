@@ -1,0 +1,242 @@
+// xxh64.nv — XXH64, in word algebra with no `Bytes` and no `Str`
+// anywhere in the module.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// XXH64 IS NOT XXH32 AT DOUBLE THE WIDTH.  The differences are real
+// and none of them is a width:
+//
+//   the stripe        THIRTY-TWO bytes, four lanes of eight.
+//   the round         accumulate, rotate by 31, multiply — and then
+//                     the MERGE applies the round a second time to
+//                     each lane and multiplies by PRIME_1 before
+//                     adding PRIME_4, which XXH32's merge does not do
+//                     at all.
+//   the tail          eight bytes at a time, then four, then one, each
+//                     with its own constant.
+//   the avalanche     shift 33, 29, 32 against XXH32's 15, 13, 16.
+//   the primes        five different numbers.
+//
+// A port that widened XXH32 passes nothing, and so does a port that
+// narrowed XXH64 into `xxh32`.
+//
+// WORDS ARE 64 BITS, WHICH IS THE WHOLE OF `Int`, so there is no mask
+// step the way XXH32 needs one.  What there IS is wrapping: the
+// algorithm is defined modulo 2^64 and `Int` traps on overflow
+// (SPEC § 13.2), so every multiply and add is `std.int`'s wrapping
+// form and every value this module answers is the reference
+// algorithm's bit pattern reinterpreted as SIGNED.  Three of the five
+// primes have their high bit set and are written as negative decimals
+// for that reason.  `xxhbytes.text64` is how a caller prints one that
+// matches `xxhsum`.
+//
+// THIS IS ONE OF THE TWO MODULES A DEVICE GETS — `start`, `feed_byte`
+// and `finish` are a whole hash with no allocator behind them.
+
+// ── Sizes ────────────────────────────────────────────────────────────
+
+// The stripe XXH64 consumes at a time: thirty-two bytes, four lanes of
+// eight.
+pub const XXH64_STRIPE_BYTES = 32
+
+// The lanes: four.
+pub const XXH64_LANES = 4
+
+// The digest: eight bytes.
+pub const XXH64_DIGEST_BYTES = 8
+
+// ── The five primes ──────────────────────────────────────────────────
+//
+// Three of the five have their high bit set and `Int` is signed, so
+// they cannot be written as hex literals.  The hexadecimal is beside
+// each, because that is the form the reference implementation and
+// every other port print.
+
+// 0x9E3779B185EBCA87 — the round multiplier.
+pub const XXH64_PRIME_1 = -7046029288634856825
+
+// 0xC2B2AE3D27D4EB4F — the round's second multiplier.
+pub const XXH64_PRIME_2 = -4417276706812531889
+
+// 0x165667B19E3779F9 — the avalanche's first.
+pub const XXH64_PRIME_3 = 1609587929392839161
+
+// 0x85EBCA77C2B2AE63 — the merge's addend multiplier.
+pub const XXH64_PRIME_4 = -8796714831421723037
+
+// 0x27D4EB2F165667C5 — the tail's multiplier, and the seed offset the
+// short-input path starts from.
+pub const XXH64_PRIME_5 = 2870177450012600261
+
+// ── The state ────────────────────────────────────────────────────────
+
+// A running XXH64 between bytes.
+//
+// A `@value` struct of four accumulators, a four-word stripe buffer,
+// a fill count, a length and a seed — eighty-eight bytes of the
+// caller's own frame, and nothing on a heap.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.total(xxh64.start(0))}")            // 0
+// ```
+pub @value
+struct Xxh64State
+    // The four accumulators.
+    v: [Int; 4]
+    // Bytes seen but not yet folded into a lane, as four little-endian
+    // 64-bit words: byte `j` is bits `8*(j mod 8)` of word `j / 8`.
+    buf: [Int; 4]
+    // Bytes of `buf` that hold input: 0 ..= 31.
+    buffered: Int
+    // Every byte fed so far.
+    total: Int
+    // The seed this state started from.
+    seed: Int
+
+// ── The arithmetic ───────────────────────────────────────────────────
+
+// `x` rotated LEFT by `n` bits, over 64.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.rotl(1, 1)}")                       // 2
+// ```
+pub fn rotl(x: Int, n: Int) -> Int []
+    todo("xxhash-nv.xxh64.rotl")
+
+// One lane's round: `rotl(acc + input * PRIME_2, 31) * PRIME_1`.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.round(0, 0) == 0}")                 // true
+// ```
+pub fn round(acc: Int, input: Int) -> Int []
+    todo("xxhash-nv.xxh64.round")
+
+// The merge step XXH32 has no counterpart for: `(h XOR round(0, lane))
+// * PRIME_1 + PRIME_4`.
+//
+// Published separately because it is the difference between the two
+// algorithms that a reader looking for one will not find in the round
+// function — XXH64 applies the round a SECOND time, to the lane, on
+// the way out.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.merge_lane(0, 0) == xxh64.XXH64_PRIME_4}")   // true
+// ```
+pub fn merge_lane(h: Int, lane: Int) -> Int []
+    todo("xxhash-nv.xxh64.merge_lane")
+
+// The final mix: XOR-shift-multiply at 33, 29 and 32.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.avalanche(0)}")                     // 0
+// ```
+pub fn avalanche(h: Int) -> Int []
+    todo("xxhash-nv.xxh64.avalanche")
+
+// ── Building and reading a state ─────────────────────────────────────
+
+// A fresh state at this seed.
+//
+// The lanes start at `seed + PRIME_1 + PRIME_2`, `seed + PRIME_2`,
+// `seed`, and `seed - PRIME_1`.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.seed(xxh64.start(7))}")             // 7
+// ```
+pub fn start(seed: Int) -> Xxh64State []
+    todo("xxhash-nv.xxh64.start")
+
+// Lane `i`, for `i` in 0 ..= 3.
+pub fn lane(st: Xxh64State, i: Int) -> Int []
+    todo("xxhash-nv.xxh64.lane")
+
+// The same state with lane `i` set.
+pub fn with_lane(st: Xxh64State, i: Int, v: Int) -> Xxh64State []
+    todo("xxhash-nv.xxh64.with_lane")
+
+// Buffered byte `j`, for `j` in 0 ..= 31.
+pub fn buffer_byte(st: Xxh64State, j: Int) -> Int []
+    todo("xxhash-nv.xxh64.buffer_byte")
+
+// Bytes of the stripe buffer that hold input: 0 ..= 31.
+pub fn buffered(st: Xxh64State) -> Int []
+    todo("xxhash-nv.xxh64.buffered")
+
+// Every byte fed so far.
+pub fn total(st: Xxh64State) -> Int []
+    todo("xxhash-nv.xxh64.total")
+
+// The seed this state started from.
+pub fn seed(st: Xxh64State) -> Int []
+    todo("xxhash-nv.xxh64.seed")
+
+// ── The streaming hash, with no `Bytes` in it ────────────────────────
+
+// One more byte of input.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.total(xxh64.feed_byte(xxh64.start(0), 0x61))}")   // 1
+// ```
+pub fn feed_byte(st: Xxh64State, b: Int) -> Xxh64State []
+    todo("xxhash-nv.xxh64.feed_byte")
+
+// The digest: the four lanes merged, the length mixed in, the tail
+// consumed eight then four then one byte at a time, and the avalanche.
+//
+// A PURE READ — the state is unchanged, so a caller can report a
+// running hash and keep feeding.  Below thirty-two bytes the merge is
+// skipped and the hash starts from `seed + PRIME_5`.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.finish(xxh64.start(0)) != 0}")      // true
+// ```
+pub fn finish(st: Xxh64State) -> Int []
+    todo("xxhash-nv.xxh64.finish")
+
+// ── Reading a digest out ─────────────────────────────────────────────
+
+// Byte `i` of a finished digest, for `i` in 0 ..= 7, LITTLE-endian.
+pub fn byte_of(h: Int, i: Int) -> Int []
+    todo("xxhash-nv.xxh64.byte_of")
+
+// The low thirty-two bits of a 64-bit digest.
+//
+// THE CALL zstd-nv's FRAME TRAILER NEEDS.  A Zstandard frame's
+// `Content_Checksum` is four bytes, not eight, and they are the low
+// half of the XXH64 — so a reader comparing this package's answer
+// against `zstd -l` has to truncate first, and this is where that is
+// written down rather than rediscovered.
+//
+// ```novo
+// use xxh64
+//
+// fn main() [io]
+//     println("${xxh64.low32(0x1122334455667788)}")        // 1432778632
+// ```
+pub fn low32(h: Int) -> Int []
+    todo("xxhash-nv.xxh64.low32")

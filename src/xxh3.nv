@@ -1,0 +1,239 @@
+// xxh3.nv — XXH3, at 64 and 128 bits, with its secret and its four
+// size-dependent paths declared.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// XXH3 IS A THIRD ALGORITHM, not a third width.  It shares the family
+// name and nothing else: a 192-byte secret instead of five primes,
+// wide accumulators designed for SIMD, and FOUR SEPARATE CODE PATHS
+// chosen by input length, each producing a different function.  The
+// four boundaries are public constants below, because they are the
+// first thing an implementer needs and the first thing a reader
+// comparing against the reference has to line up.
+//
+// THERE IS NO SPECIFICATION DOCUMENT.  xxHash has an
+// `xxhash_spec.md` that covers XXH32 and XXH64; XXH3 is defined by
+// `Cyan4973/xxHash`'s own source, and the project's guarantee is that
+// the OUTPUT has been stable since v0.8.0.  So the reference
+// implementation is not a second opinion here — it is the definition —
+// and this package's job is to reproduce it, not to interpret it.
+// That is worth stating before somebody spends a day looking for the
+// paragraph that settles an ambiguity.
+//
+// THE SECRET AND THE SEED ARE THE SAME KNOB.  A seeded XXH3 derives a
+// custom secret from the default one and the seed; a caller who
+// supplies both has asked for two different secrets, and the reference
+// resolves that silently.  This refuses — `XxhSeedAndSecretBothGiven`
+// — because the two choices produce different digests.
+//
+// THIS MODULE IS NOT IN THE DEVICE CLAIM, and the reason is the
+// algorithm's own: XXH3's accumulator layout exists to be eight lanes
+// of SIMD, and on a Cortex-M4 the scalar path is slower than XXH32
+// while the state and secret cost ~256 bytes more.  A device that
+// wants a checksum wants `xxh32`.  The secret travels as `Bytes` here
+// for the same reason — there is no device consumer to keep it out
+// for.
+//
+// WHAT IS DECLARED AND WHAT IS SCOPED OUT.  The one-shots at both
+// widths, the seeded and custom-secret forms, the four length paths by
+// name, and the 128-bit digest as a `@value` pair.  NOT here: the
+// streaming state.  `Xxh3State` is declared so the shape is public and
+// the boundary is visible, but the streaming form's internal buffer is
+// 256 bytes plus a 192-byte secret and its block-accumulation rule is
+// a second algorithm's worth of detail — see the README's "What is
+// outside".
+
+// ── The secret ───────────────────────────────────────────────────────
+
+// The default secret's length: 192 bytes.
+//
+// The `kSecret` array in the reference implementation, which every
+// unseeded XXH3 uses and which a seeded one is derived from.
+pub const XXH3_SECRET_BYTES_DEFAULT = 192
+
+// The shortest custom secret XXH3 admits: 136 bytes.
+//
+// Not a style rule.  The long-input path reads the secret at offsets
+// derived from the stripe counter, so a shorter one would be read past
+// its end; the reference refuses below this and so does
+// `check_secret`.
+pub const XXH3_SECRET_BYTES_LEAST = 136
+
+// ── The four length paths ────────────────────────────────────────────
+//
+// Published as constants because they are the first thing an
+// implementer lines up against the reference, and because a caller
+// benchmarking XXH3 needs to know that a 16-byte input and a 17-byte
+// input run entirely different code.
+
+// At or below sixteen bytes: the short path, which reads the input
+// once and never touches an accumulator.
+pub const XXH3_LEN_SHORT_MOST = 16
+
+// Above sixteen and at or below one hundred and twenty-eight: the
+// midsize path, a fixed number of secret-XOR-multiply mixes.
+pub const XXH3_LEN_MID_MOST = 128
+
+// Above one hundred and twenty-eight and at or below two hundred and
+// forty: the "midsize-128" path, which is the midsize one with a
+// second round of mixing.
+pub const XXH3_LEN_MID128_MOST = 240
+
+// The stripe the long path consumes: sixty-four bytes.
+pub const XXH3_STRIPE_BYTES = 64
+
+// Stripes per block before the secret is scrambled: sixteen, so a
+// block is 1024 bytes.
+pub const XXH3_STRIPES_PER_BLOCK = 16
+
+// The accumulators: eight 64-bit lanes.
+pub const XXH3_ACC_LANES = 8
+
+// The digest at each width, in bytes.
+pub const XXH3_DIGEST_BYTES_64 = 8
+
+// The 128-bit digest, in bytes.
+pub const XXH3_DIGEST_BYTES_128 = 16
+
+// ── The values ───────────────────────────────────────────────────────
+
+// A 128-bit digest, as its two halves.
+//
+// A `@value` struct rather than a `Bytes` or a tuple, so it costs the
+// caller sixteen bytes of their own frame and can be compared with two
+// integer compares.  `low` is the half that equals the 64-bit XXH3 of
+// the same input — which is a property of the algorithm worth knowing
+// and NOT worth relying on, because the reference documents the two as
+// separate functions.
+//
+// ```novo
+// use xxh3
+//
+// fn main() [io]
+//     println("${xxh3.digest_low(xxh3.digest128(0, 0))}")  // 0
+// ```
+pub @value
+struct Xxh128
+    // The low 64 bits.  In the canonical byte order this is the FIRST
+    // eight bytes, little-endian.
+    low: Int
+    // The high 64 bits.
+    high: Int
+
+// The long path's accumulator bank, declared so the shape of the
+// streaming form is public before the streaming form exists.
+//
+// Eight 64-bit lanes, seeded from the secret, scrambled once per
+// 1024-byte block.  A `@value`, so the bank itself is sixty-four bytes
+// of frame; what is NOT here is the 256-byte input buffer and the
+// derived secret a streaming state would also have to carry, which is
+// why the streaming form is scoped out rather than half-declared.
+//
+// ```novo
+// use xxh3
+//
+// fn main() [io]
+//     println("${xxh3.acc_lane(xxh3.acc_start(), 0) != 0}")   // true
+// ```
+pub @value
+struct Xxh3State
+    // The eight accumulators.
+    acc: [Int; 8]
+    // Stripes folded into `acc` since the last secret scramble.
+    stripe: Int
+    // Bytes accumulated so far.
+    total: Int
+
+// ── Building a digest ────────────────────────────────────────────────
+
+// A 128-bit digest from its two halves.
+//
+// ```novo
+// use xxh3
+//
+// fn main() [io]
+//     println("${xxh3.digest_high(xxh3.digest128(1, 2))}")  // 2
+// ```
+pub fn digest128(low: Int, high: Int) -> Xxh128 []
+    todo("xxhash-nv.xxh3.digest128")
+
+// The low 64 bits of a 128-bit digest.
+pub fn digest_low(d: Xxh128) -> Int []
+    todo("xxhash-nv.xxh3.digest_low")
+
+// The high 64 bits of a 128-bit digest.
+pub fn digest_high(d: Xxh128) -> Int []
+    todo("xxhash-nv.xxh3.digest_high")
+
+// Byte `i` of a 128-bit digest in its canonical order, for `i` in
+// 0 ..= 15: the low half first, each half little-endian.
+//
+// Published because the canonical order is the one thing about XXH3
+// that a reader cannot infer, and because a program writing a digest
+// into a format needs it byte by byte.
+//
+// ```novo
+// use xxh3
+//
+// fn main() [io]
+//     println("${xxh3.digest_byte(xxh3.digest128(0x11, 0), 0)}")   // 17
+// ```
+pub fn digest_byte(d: Xxh128, i: Int) -> Int []
+    todo("xxhash-nv.xxh3.digest_byte")
+
+// ── The accumulator bank ─────────────────────────────────────────────
+
+// The bank as the long path starts it, from the default secret.
+pub fn acc_start() -> Xxh3State []
+    todo("xxhash-nv.xxh3.acc_start")
+
+// Lane `i` of the bank, for `i` in 0 ..= 7.
+pub fn acc_lane(st: Xxh3State, i: Int) -> Int []
+    todo("xxhash-nv.xxh3.acc_lane")
+
+// The same bank with lane `i` set.
+pub fn with_acc_lane(st: Xxh3State, i: Int, v: Int) -> Xxh3State []
+    todo("xxhash-nv.xxh3.with_acc_lane")
+
+// Stripes folded since the last scramble: 0 ..= 15.
+pub fn stripe(st: Xxh3State) -> Int []
+    todo("xxhash-nv.xxh3.stripe")
+
+// Bytes accumulated so far.
+pub fn total(st: Xxh3State) -> Int []
+    todo("xxhash-nv.xxh3.total")
+
+// ── Which path an input takes ────────────────────────────────────────
+
+// Which of the four paths an input of `len` bytes runs.
+//
+// 0 for the short path, 1 for midsize, 2 for midsize-128, 3 for the
+// long one.  An `Int` rather than an enum on purpose: this is a
+// property of the reference implementation's control flow, not a
+// vocabulary a caller should branch on, and publishing an enum would
+// invite somebody to switch on it.  It is here so a benchmark and a
+// differential test can say WHICH path they covered.
+//
+// ```novo
+// use xxh3
+//
+// fn main() [io]
+//     println("${xxh3.path_for(16)}")                      // 0
+// ```
+pub fn path_for(len: Int) -> Int []
+    todo("xxhash-nv.xxh3.path_for")
+
+// Whether a custom secret is long enough.
+//
+// ```novo
+// use std.bytes
+// use xxh3
+//
+// fn main() [io]
+//     match xxh3.check_secret(bytes.zeros(64))
+//         Some(_) => println("too short")
+//         None => println("ok")
+// ```
+pub fn check_secret(secret: Bytes) -> ?XxhError []
+    todo("xxhash-nv.xxh3.check_secret")
