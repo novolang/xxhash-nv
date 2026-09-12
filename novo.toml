@@ -1,6 +1,6 @@
 [package]
 name        = "xxhash-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "xxHash for novo-lang: XXH32, XXH64 and XXH3 as three separate types with no shared entry point, because a format names ONE of them and two four-byte checksums over the same bytes are different numbers.  Streaming @value states with one-shot forms, seeds, and XXH3's secret and size-dependent paths declared and scoped.  The copy zstd-nv and lz4-nv each carry privately.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 
