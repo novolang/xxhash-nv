@@ -1,9 +1,6 @@
 // xxhbytes.nv — the bridge: `Bytes` in, an `Int` or a `@value` out,
 // and the one-shots every caller actually uses.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // THIS IS THE HALF A SERVER GETS.  `xxh32` and `xxh64` speak words and
 // inline arrays and are in the device claim; this module speaks
 // `Bytes` and `Str`, which are heap objects, and is not.
@@ -19,7 +16,11 @@
 // `feed64_range` hash `n` bytes at `off` without slicing, which is the
 // difference between one allocation and one per block.
 
+use std.bytes
+use std.int
+use std.bits
 use xxh3
+use xxherr
 use xxh32
 use xxh64
 
@@ -40,7 +41,7 @@ use xxh64
 //     println("${xxh32.total(xxhbytes.feed32(xxh32.start(0), bytes.from_str("abc")))}")
 // ```
 pub fn feed32(st: Xxh32State, chunk: Bytes) -> Xxh32State []
-    todo("xxhash-nv.xxhbytes.feed32")
+    feed32_range(st, chunk, 0, bytes.len(chunk))
 
 // `n` bytes at `off` of `chunk` into an XXH32 state.
 //
@@ -53,7 +54,37 @@ pub fn feed32(st: Xxh32State, chunk: Bytes) -> Xxh32State []
 //     println("${xxh32.total(xxhbytes.feed32_range(xxh32.start(0), bytes.zeros(64), 0, 16))}")
 // ```
 pub fn feed32_range(st: Xxh32State, chunk: Bytes, off: Int, n: Int) -> Xxh32State []
-    todo("xxhash-nv.xxhbytes.feed32_range")
+    let r = clamp_range(chunk, off, n)
+    let lo = r.0
+    let hi = r.1
+    var s = st
+    var p = lo
+    // Up to a stripe boundary a byte at a time, so a chunk that
+    // continues an earlier one joins its buffered bytes first.
+    while p < hi and xxh32.buffered(s) != 0
+        s = xxh32.feed_byte(s, bytes.byte_at(chunk, p) ?? 0)
+        p = p + 1
+    // Whole stripes straight from the buffer, the four lanes held in
+    // locals so the state is rebuilt once.
+    let stripes = (hi - p) / xxh32.XXH32_STRIPE_BYTES
+    if stripes > 0
+        var a = xxh32.lane(s, 0)
+        var b = xxh32.lane(s, 1)
+        var c = xxh32.lane(s, 2)
+        var d = xxh32.lane(s, 3)
+        for k in 0..stripes
+            let q = p + k * xxh32.XXH32_STRIPE_BYTES
+            a = xxh32.round(a, bytes.u32_le_at(chunk, q) ?? 0)
+            b = xxh32.round(b, bytes.u32_le_at(chunk, q + 4) ?? 0)
+            c = xxh32.round(c, bytes.u32_le_at(chunk, q + 8) ?? 0)
+            d = xxh32.round(d, bytes.u32_le_at(chunk, q + 12) ?? 0)
+        s = Xxh32State { v: [a, b, c, d], buf: s.buf, buffered: 0,
+                         total: xxh32.total(s) + stripes * xxh32.XXH32_STRIPE_BYTES, seed: xxh32.seed(s) }
+        p = p + stripes * xxh32.XXH32_STRIPE_BYTES
+    while p < hi
+        s = xxh32.feed_byte(s, bytes.byte_at(chunk, p) ?? 0)
+        p = p + 1
+    s
 
 // XXH32 of `data` at `seed`, in one call.
 //
@@ -71,11 +102,11 @@ pub fn feed32_range(st: Xxh32State, chunk: Bytes, off: Int, n: Int) -> Xxh32Stat
 //     println("${xxhbytes.hash32(bytes.from_str("abc"), 0) != 0}")   // true
 // ```
 pub fn hash32(data: Bytes, seed: Int) -> Int []
-    todo("xxhash-nv.xxhbytes.hash32")
+    xxh32.finish(feed32(xxh32.start(seed), data))
 
 // XXH32 of `n` bytes at `off`, in one call.
 pub fn hash32_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
-    todo("xxhash-nv.xxhbytes.hash32_range")
+    xxh32.finish(feed32_range(xxh32.start(seed), data, off, n))
 
 // A finished XXH32 written into `out` as four LITTLE-endian bytes —
 // the canonical order every format stores.
@@ -91,8 +122,13 @@ pub fn hash32_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
 //         Ok(d) => println(bytes.to_hex(d))                 // 44332211
 //         Err(_) => println("no room")
 // ```
-pub fn digest32_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
-    todo("xxhash-nv.xxhbytes.digest32_into")
+pub fn digest32_into(h: Int, var out: Bytes) -> Result<Bytes, XxhError> []
+    let have = bytes.len(out)
+    if have < xxh32.XXH32_DIGEST_BYTES
+        Err(XxhOutputTooSmall(xxh32.XXH32_DIGEST_BYTES, have))
+    else
+        bytes.set_u32_le(out, 0, h & xxh32.XXH32_WORD_MASK)
+        Ok(bytes.slice(out, 0, xxh32.XXH32_DIGEST_BYTES))
 
 // ── XXH64 ────────────────────────────────────────────────────────────
 
@@ -107,7 +143,7 @@ pub fn digest32_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
 //     println("${xxh64.total(xxhbytes.feed64(xxh64.start(0), bytes.from_str("abc")))}")
 // ```
 pub fn feed64(st: Xxh64State, chunk: Bytes) -> Xxh64State []
-    todo("xxhash-nv.xxhbytes.feed64")
+    feed64_range(st, chunk, 0, bytes.len(chunk))
 
 // `n` bytes at `off` of `chunk` into an XXH64 state.
 //
@@ -120,7 +156,33 @@ pub fn feed64(st: Xxh64State, chunk: Bytes) -> Xxh64State []
 //     println("${xxh64.total(xxhbytes.feed64_range(xxh64.start(0), bytes.zeros(64), 0, 32))}")
 // ```
 pub fn feed64_range(st: Xxh64State, chunk: Bytes, off: Int, n: Int) -> Xxh64State []
-    todo("xxhash-nv.xxhbytes.feed64_range")
+    let r = clamp_range(chunk, off, n)
+    let lo = r.0
+    let hi = r.1
+    var s = st
+    var p = lo
+    while p < hi and xxh64.buffered(s) != 0
+        s = xxh64.feed_byte(s, bytes.byte_at(chunk, p) ?? 0)
+        p = p + 1
+    let stripes = (hi - p) / xxh64.XXH64_STRIPE_BYTES
+    if stripes > 0
+        var a = xxh64.lane(s, 0)
+        var b = xxh64.lane(s, 1)
+        var c = xxh64.lane(s, 2)
+        var d = xxh64.lane(s, 3)
+        for k in 0..stripes
+            let q = p + k * xxh64.XXH64_STRIPE_BYTES
+            a = xxh64.round(a, bytes.u64_le_at(chunk, q) ?? 0)
+            b = xxh64.round(b, bytes.u64_le_at(chunk, q + 8) ?? 0)
+            c = xxh64.round(c, bytes.u64_le_at(chunk, q + 16) ?? 0)
+            d = xxh64.round(d, bytes.u64_le_at(chunk, q + 24) ?? 0)
+        s = Xxh64State { v: [a, b, c, d], buf: s.buf, buffered: 0,
+                         total: xxh64.total(s) + stripes * xxh64.XXH64_STRIPE_BYTES, seed: xxh64.seed(s) }
+        p = p + stripes * xxh64.XXH64_STRIPE_BYTES
+    while p < hi
+        s = xxh64.feed_byte(s, bytes.byte_at(chunk, p) ?? 0)
+        p = p + 1
+    s
 
 // XXH64 of `data` at `seed`, in one call.
 //
@@ -137,11 +199,11 @@ pub fn feed64_range(st: Xxh64State, chunk: Bytes, off: Int, n: Int) -> Xxh64Stat
 //     println("${xxhbytes.hash64(bytes.from_str("abc"), 0) != 0}")   // true
 // ```
 pub fn hash64(data: Bytes, seed: Int) -> Int []
-    todo("xxhash-nv.xxhbytes.hash64")
+    xxh64.finish(feed64(xxh64.start(seed), data))
 
 // XXH64 of `n` bytes at `off`, in one call.
 pub fn hash64_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
-    todo("xxhash-nv.xxhbytes.hash64_range")
+    xxh64.finish(feed64_range(xxh64.start(seed), data, off, n))
 
 // A finished XXH64 written into `out` as eight LITTLE-endian bytes.
 //
@@ -154,8 +216,13 @@ pub fn hash64_range(data: Bytes, off: Int, n: Int, seed: Int) -> Int []
 //         Ok(d) => println(bytes.to_hex(d))
 //         Err(_) => println("no room")
 // ```
-pub fn digest64_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
-    todo("xxhash-nv.xxhbytes.digest64_into")
+pub fn digest64_into(h: Int, var out: Bytes) -> Result<Bytes, XxhError> []
+    let have = bytes.len(out)
+    if have < xxh64.XXH64_DIGEST_BYTES
+        Err(XxhOutputTooSmall(xxh64.XXH64_DIGEST_BYTES, have))
+    else
+        bytes.set_u64_le(out, 0, h)
+        Ok(bytes.slice(out, 0, xxh64.XXH64_DIGEST_BYTES))
 
 // ── XXH3 ─────────────────────────────────────────────────────────────
 
@@ -169,7 +236,7 @@ pub fn digest64_into(h: Int, out: Bytes) -> Result<Bytes, XxhError> []
 //     println("${xxhbytes.hash3_64(bytes.from_str("abc")) != 0}")    // true
 // ```
 pub fn hash3_64(data: Bytes) -> Int []
-    todo("xxhash-nv.xxhbytes.hash3_64")
+    h3_64(data, KSECRET, 0)
 
 // XXH3 at 64 bits with a seed, which derives a secret from the default
 // one.
@@ -185,7 +252,10 @@ pub fn hash3_64(data: Bytes) -> Int []
 //     println("${xxhbytes.hash3_64_seeded(bytes.from_str("abc"), 0) == xxhbytes.hash3_64(bytes.from_str("abc"))}")
 // ```
 pub fn hash3_64_seeded(data: Bytes, seed: Int) -> Int []
-    todo("xxhash-nv.xxhbytes.hash3_64_seeded")
+    if seed == 0 or bytes.len(data) <= xxh3.XXH3_LEN_MID128_MOST
+        h3_64(data, KSECRET, seed)
+    else
+        h3_64(data, derive_secret(seed), 0)
 
 // XXH3 at 64 bits over a caller's secret.
 //
@@ -202,7 +272,9 @@ pub fn hash3_64_seeded(data: Bytes, seed: Int) -> Int []
 //         Err(_) => println("secret too short")
 // ```
 pub fn hash3_64_with_secret(data: Bytes, secret: Bytes) -> Result<Int, XxhError> []
-    todo("xxhash-nv.xxhbytes.hash3_64_with_secret")
+    match xxh3.check_secret(secret)
+        Some(e) => Err(e)
+        None    => Ok(h3_64(data, secret, 0))
 
 // XXH3 at 128 bits, unseeded, over the default secret.
 //
@@ -215,7 +287,7 @@ pub fn hash3_64_with_secret(data: Bytes, secret: Bytes) -> Result<Int, XxhError>
 //     println("${xxh3.digest_low(xxhbytes.hash3_128(bytes.from_str("abc"))) != 0}")
 // ```
 pub fn hash3_128(data: Bytes) -> Xxh128 []
-    todo("xxhash-nv.xxhbytes.hash3_128")
+    h3_128(data, KSECRET, 0)
 
 // XXH3 at 128 bits with a seed.
 //
@@ -228,7 +300,10 @@ pub fn hash3_128(data: Bytes) -> Xxh128 []
 //     println("${xxh3.digest_high(xxhbytes.hash3_128_seeded(bytes.from_str("abc"), 7)) != 0}")
 // ```
 pub fn hash3_128_seeded(data: Bytes, seed: Int) -> Xxh128 []
-    todo("xxhash-nv.xxhbytes.hash3_128_seeded")
+    if seed == 0 or bytes.len(data) <= xxh3.XXH3_LEN_MID128_MOST
+        h3_128(data, KSECRET, seed)
+    else
+        h3_128(data, derive_secret(seed), 0)
 
 // XXH3 at 128 bits over a caller's secret.
 //
@@ -248,8 +323,10 @@ pub fn hash3_128_seeded(data: Bytes, seed: Int) -> Xxh128 []
 //         Err(_) => println("secret too short")
 // ```
 pub fn hash3_128_with_secret_into(data: Bytes, secret: Bytes,
-                                  out: Bytes) -> Result<Bytes, XxhError> []
-    todo("xxhash-nv.xxhbytes.hash3_128_with_secret_into")
+                                  var out: Bytes) -> Result<Bytes, XxhError> []
+    match xxh3.check_secret(secret)
+        Some(e) => Err(e)
+        None    => digest128_into(h3_128(data, secret, 0), var out)
 
 // A 128-bit digest written into `out` in canonical order: the low half
 // first, each half little-endian.
@@ -264,8 +341,14 @@ pub fn hash3_128_with_secret_into(data: Bytes, secret: Bytes,
 //         Ok(d) => println(bytes.to_hex(d))
 //         Err(_) => println("no room")
 // ```
-pub fn digest128_into(d: Xxh128, out: Bytes) -> Result<Bytes, XxhError> []
-    todo("xxhash-nv.xxhbytes.digest128_into")
+pub fn digest128_into(d: Xxh128, var out: Bytes) -> Result<Bytes, XxhError> []
+    let have = bytes.len(out)
+    if have < xxh3.XXH3_DIGEST_BYTES_128
+        Err(XxhOutputTooSmall(xxh3.XXH3_DIGEST_BYTES_128, have))
+    else
+        bytes.set_u64_le(out, 0, xxh3.digest_low(d))
+        bytes.set_u64_le(out, 8, xxh3.digest_high(d))
+        Ok(bytes.slice(out, 0, xxh3.XXH3_DIGEST_BYTES_128))
 
 // ── Printing ─────────────────────────────────────────────────────────
 
@@ -281,7 +364,9 @@ pub fn digest128_into(d: Xxh128, out: Bytes) -> Result<Bytes, XxhError> []
 //     println(xxhbytes.text32(0x02cc5d05))                  // 02cc5d05
 // ```
 pub fn text32(h: Int) -> Str []
-    todo("xxhash-nv.xxhbytes.text32")
+    var b = bytes.zeros(4)
+    bytes.set_u32_be(b, 0, h & xxh32.XXH32_WORD_MASK)
+    bytes.to_hex(b)
 
 // A 64-bit digest as sixteen lowercase hexadecimal characters,
 // UNSIGNED.
@@ -298,7 +383,9 @@ pub fn text32(h: Int) -> Str []
 //     println(xxhbytes.text64(-1))                          // ffffffffffffffff
 // ```
 pub fn text64(h: Int) -> Str []
-    todo("xxhash-nv.xxhbytes.text64")
+    var b = bytes.zeros(8)
+    bytes.set_u64_be(b, 0, h)
+    bytes.to_hex(b)
 
 // A 128-bit digest as thirty-two lowercase hexadecimal characters,
 // HIGH half first.
@@ -316,4 +403,292 @@ pub fn text64(h: Int) -> Str []
 //     println(xxhbytes.text128(xxh3.digest128(0, 0)))
 // ```
 pub fn text128(d: Xxh128) -> Str []
-    todo("xxhash-nv.xxhbytes.text128")
+    var b = bytes.zeros(16)
+    bytes.set_u64_be(b, 0, xxh3.digest_high(d))
+    bytes.set_u64_be(b, 8, xxh3.digest_low(d))
+    bytes.to_hex(b)
+
+// ── XXH3 internals ───────────────────────────────────────────────────
+//
+// XXH3 has no specification document: the reference implementation in
+// `Cyan4973/xxHash` is the definition, and what follows is that code
+// read function by function.  The names keep the reference's, so a
+// reader holding both can line them up.  Arithmetic is modulo 2^64, so
+// every function that adds or multiplies is `@wrapping`.
+
+// The 192-byte default secret, the reference's `kSecret`.
+let KSECRET = bytes.from_hex("b8fe6c3923a44bbe7c01812cf721ad1cded46de9839097db7240a4a4b7b3671fcb79e64eccc0e578825ad07dccff7221b8084674f743248ee03590e6813a264c3c2852bb91c300cb88d0658b1b532ea371644897a20df94e3819ef46a9deacd8a8fa763fe39c343ff9dcbbc7c70b4f1d8a51e04bcdb45931c89f7ec9d9787364eac5ac8334d3ebc3c581a0fffa1363eb170ddd51b7f0da49d316552629d4689e2b16be587d47a1fc8ff8b8d17ad031ce45cb3a8f95160428afd7fbcabb4b407e") ?? bytes.zeros(0)
+
+// 0x165667919E3779F9.
+const PRIME_MX1 = 1609587791953885689
+
+// 0x9FB21C651E98DF25.
+const PRIME_MX2 = -6939452855193903323
+
+// The secret a seeded XXH3 hashes a long input with: the default secret
+// with the seed added to the low half of every sixteen bytes and
+// subtracted from the high half.
+@wrapping
+fn derive_secret(seed: Int) -> Bytes []
+    var out = bytes.zeros(xxh3.XXH3_SECRET_BYTES_DEFAULT)
+    for i in 0..12
+        bytes.set_u64_le(out, 16 * i, r64(KSECRET, 16 * i) + seed)
+        bytes.set_u64_le(out, 16 * i + 8, r64(KSECRET, 16 * i + 8) - seed)
+    out
+
+// `off` and `n` as a half-open range clamped to the buffer, so a range
+// that runs past the end hashes the bytes that exist.
+fn clamp_range(b: Bytes, off: Int, n: Int) -> (Int, Int) []
+    let len = bytes.len(b)
+    let lo = if off < 0
+        0
+    else if off > len
+        len
+    else
+        off
+    let hi = if n < 0
+        lo
+    else if n > len - lo
+        len
+    else
+        lo + n
+    (lo, hi)
+
+fn r64(b: Bytes, o: Int) -> Int []
+    bytes.u64_le_at(b, o) ?? 0
+
+fn r32(b: Bytes, o: Int) -> Int []
+    bytes.u32_le_at(b, o) ?? 0
+
+// A 32-bit word with its bytes reversed.
+fn bswap32(x: Int) -> Int []
+    let v = x & 0xFFFFFFFF
+    ((v & 0xFF) << 24) | ((v & 0xFF00) << 8) | ((v >>> 8) & 0xFF00) | (v >>> 24)
+
+// A 64-bit word with its bytes reversed.
+fn bswap64(x: Int) -> Int []
+    (bswap32(x) << 32) | bswap32(x >>> 32)
+
+// The 128-bit product folded to 64 bits: low half XOR high half.
+@wrapping
+fn fold(a: Int, b: Int) -> Int []
+    (a * b) ^ int.wrapping_mul_high(a, b)
+
+fn xorshift(h: Int, s: Int) -> Int []
+    h ^ (h >>> s)
+
+@wrapping
+fn avalanche3(h: Int) -> Int []
+    xorshift(xorshift(h, 37) * PRIME_MX1, 32)
+
+@wrapping
+fn rrmxmx(h: Int, len: Int) -> Int []
+    var x = h ^ (bits.rotate_left(h, 49) ^ bits.rotate_left(h, 24))
+    x = x * PRIME_MX2
+    x = x ^ ((x >>> 35) + len)
+    x = x * PRIME_MX2
+    xorshift(x, 28)
+
+// One sixteen-byte step of the mid-size paths.
+@wrapping
+fn mix16(d: Bytes, o: Int, secret: Bytes, so: Int, seed: Int) -> Int []
+    fold(r64(d, o) ^ (r64(secret, so) + seed), r64(d, o + 8) ^ (r64(secret, so + 8) - seed))
+
+// ── XXH3 at 64 bits ──
+
+@wrapping
+fn h3_64(d: Bytes, secret: Bytes, seed: Int) -> Int []
+    let len = bytes.len(d)
+    if len <= 16
+        short64(d, len, secret, seed)
+    else if len <= 128
+        mid64(d, len, secret, seed)
+    else if len <= 240
+        mid240_64(d, len, secret, seed)
+    else
+        let acc = long_acc(d, len, secret, bytes.len(secret))
+        merge_accs(acc, secret, 11, len * xxh64.XXH64_PRIME_1)
+
+@wrapping
+fn short64(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Int []
+    if len > 8
+        let lo = r64(d, 0) ^ ((r64(secret, 24) ^ r64(secret, 32)) + seed)
+        let hi = r64(d, len - 8) ^ ((r64(secret, 40) ^ r64(secret, 48)) - seed)
+        avalanche3(len + bswap64(lo) + hi + fold(lo, hi))
+    else if len >= 4
+        let sd = seed ^ (bswap32(seed & 0xFFFFFFFF) << 32)
+        let i64 = r32(d, len - 4) + (r32(d, 0) << 32)
+        rrmxmx(i64 ^ ((r64(secret, 8) ^ r64(secret, 16)) - sd), len)
+    else if len > 0
+        let c1 = bytes.byte_at(d, 0) ?? 0
+        let c2 = bytes.byte_at(d, len >>> 1) ?? 0
+        let c3 = bytes.byte_at(d, len - 1) ?? 0
+        let combined = (c1 << 16) | (c2 << 24) | c3 | (len << 8)
+        xxh64.avalanche(combined ^ ((r32(secret, 0) ^ r32(secret, 4)) + seed))
+    else
+        xxh64.avalanche(seed ^ (r64(secret, 56) ^ r64(secret, 64)))
+
+@wrapping
+fn mid64(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Int []
+    var acc = len * xxh64.XXH64_PRIME_1
+    if len > 32
+        if len > 64
+            if len > 96
+                acc = acc + mix16(d, 48, secret, 96, seed)
+                acc = acc + mix16(d, len - 64, secret, 112, seed)
+            acc = acc + mix16(d, 32, secret, 64, seed)
+            acc = acc + mix16(d, len - 48, secret, 80, seed)
+        acc = acc + mix16(d, 16, secret, 32, seed)
+        acc = acc + mix16(d, len - 32, secret, 48, seed)
+    acc = acc + mix16(d, 0, secret, 0, seed)
+    acc = acc + mix16(d, len - 16, secret, 16, seed)
+    avalanche3(acc)
+
+@wrapping
+fn mid240_64(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Int []
+    var acc = len * xxh64.XXH64_PRIME_1
+    for i in 0..8
+        acc = acc + mix16(d, 16 * i, secret, 16 * i, seed)
+    acc = avalanche3(acc)
+    for i in 8..len / 16
+        acc = acc + mix16(d, 16 * i, secret, 16 * (i - 8) + 3, seed)
+    acc = acc + mix16(d, len - 16, secret, 136 - 17, seed)
+    avalanche3(acc)
+
+// ── The long path, shared by both widths ──
+
+// One 64-byte stripe into the eight accumulators.
+@wrapping
+fn accumulate_512(var acc: [Int], d: Bytes, o: Int, secret: Bytes, so: Int)
+    for i in 0..8
+        let v = r64(d, o + 8 * i)
+        let k = v ^ r64(secret, so + 8 * i)
+        acc[i ^ 1] = acc[i ^ 1] + v
+        acc[i] = acc[i] + (k & 0xFFFFFFFF) * (k >>> 32)
+
+// The scramble applied after every full block.
+@wrapping
+fn scramble(var acc: [Int], secret: Bytes, so: Int)
+    for i in 0..8
+        acc[i] = (xorshift(acc[i], 47) ^ r64(secret, so + 8 * i)) * xxh32.XXH32_PRIME_1
+
+// The eight accumulators after the whole input.
+@wrapping
+fn long_acc(d: Bytes, len: Int, secret: Bytes, ssize: Int) -> [Int] []
+    var acc = [xxh32.XXH32_PRIME_3, xxh64.XXH64_PRIME_1, xxh64.XXH64_PRIME_2, xxh64.XXH64_PRIME_3,
+               xxh64.XXH64_PRIME_4, xxh32.XXH32_PRIME_2, xxh64.XXH64_PRIME_5, xxh32.XXH32_PRIME_1]
+    let per_block = (ssize - 64) / 8
+    let block_len = 64 * per_block
+    let blocks = (len - 1) / block_len
+    for n in 0..blocks
+        for s in 0..per_block
+            accumulate_512(var acc, d, n * block_len + s * 64, secret, s * 8)
+        scramble(var acc, secret, ssize - 64)
+    let stripes = (len - 1 - block_len * blocks) / 64
+    for s in 0..stripes
+        accumulate_512(var acc, d, blocks * block_len + s * 64, secret, s * 8)
+    accumulate_512(var acc, d, len - 64, secret, ssize - 64 - 7)
+    acc
+
+@wrapping
+fn merge_accs(acc: [Int], secret: Bytes, so: Int, start: Int) -> Int []
+    var r = start
+    for i in 0..4
+        r = r + fold(acc[2 * i] ^ r64(secret, so + 16 * i), acc[2 * i + 1] ^ r64(secret, so + 16 * i + 8))
+    avalanche3(r)
+
+// ── XXH3 at 128 bits ──
+
+@wrapping
+fn h3_128(d: Bytes, secret: Bytes, seed: Int) -> Xxh128 []
+    let len = bytes.len(d)
+    if len <= 16
+        short128(d, len, secret, seed)
+    else if len <= 128
+        mid128(d, len, secret, seed)
+    else if len <= 240
+        mid240_128(d, len, secret, seed)
+    else
+        let ssize = bytes.len(secret)
+        let acc = long_acc(d, len, secret, ssize)
+        xxh3.digest128(merge_accs(acc, secret, 11, len * xxh64.XXH64_PRIME_1),
+                       merge_accs(acc, secret, ssize - 64 - 11, (len * xxh64.XXH64_PRIME_2) ^ -1))
+
+@wrapping
+fn short128(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Xxh128 []
+    if len > 8
+        let ilo = r64(d, 0)
+        var ihi = r64(d, len - 8)
+        let a = ilo ^ ihi ^ ((r64(secret, 32) ^ r64(secret, 40)) - seed)
+        var mlo = a * xxh64.XXH64_PRIME_1
+        var mhi = int.wrapping_mul_high(a, xxh64.XXH64_PRIME_1)
+        mlo = mlo + ((len - 1) << 54)
+        ihi = ihi ^ ((r64(secret, 48) ^ r64(secret, 56)) + seed)
+        mhi = mhi + ihi + (ihi & 0xFFFFFFFF) * (xxh32.XXH32_PRIME_2 - 1)
+        mlo = mlo ^ bswap64(mhi)
+        let hlo = mlo * xxh64.XXH64_PRIME_2
+        let hhi = int.wrapping_mul_high(mlo, xxh64.XXH64_PRIME_2) + mhi * xxh64.XXH64_PRIME_2
+        xxh3.digest128(avalanche3(hlo), avalanche3(hhi))
+    else if len >= 4
+        let sd = seed ^ (bswap32(seed & 0xFFFFFFFF) << 32)
+        let keyed = (r32(d, 0) + (r32(d, len - 4) << 32)) ^ ((r64(secret, 16) ^ r64(secret, 24)) + sd)
+        let m = xxh64.XXH64_PRIME_1 + (len << 2)
+        var mlo = keyed * m
+        var mhi = int.wrapping_mul_high(keyed, m)
+        mhi = mhi + (mlo << 1)
+        mlo = mlo ^ (mhi >>> 3)
+        mlo = xorshift(mlo, 35)
+        mlo = mlo * PRIME_MX2
+        mlo = xorshift(mlo, 28)
+        xxh3.digest128(mlo, avalanche3(mhi))
+    else if len > 0
+        let c1 = bytes.byte_at(d, 0) ?? 0
+        let c2 = bytes.byte_at(d, len >>> 1) ?? 0
+        let c3 = bytes.byte_at(d, len - 1) ?? 0
+        let cl = (c1 << 16) | (c2 << 24) | c3 | (len << 8)
+        let sw = bswap32(cl)
+        let ch = ((sw << 13) | (sw >>> 19)) & 0xFFFFFFFF
+        let kl = cl ^ ((r32(secret, 0) ^ r32(secret, 4)) + seed)
+        let kh = ch ^ ((r32(secret, 8) ^ r32(secret, 12)) - seed)
+        xxh3.digest128(xxh64.avalanche(kl), xxh64.avalanche(kh))
+    else
+        xxh3.digest128(xxh64.avalanche(seed ^ (r64(secret, 64) ^ r64(secret, 72))),
+                       xxh64.avalanche(seed ^ (r64(secret, 80) ^ r64(secret, 88))))
+
+// The 32-byte step of the 128-bit mid-size paths: `acc` is the pair
+// (low, high), and both inputs mix into both halves.
+@wrapping
+fn mix32(lo: Int, hi: Int, d: Bytes, o1: Int, o2: Int, secret: Bytes, so: Int,
+         seed: Int) -> (Int, Int) []
+    let l = (lo + mix16(d, o1, secret, so, seed)) ^ (r64(d, o2) + r64(d, o2 + 8))
+    let h = (hi + mix16(d, o2, secret, so + 16, seed)) ^ (r64(d, o1) + r64(d, o1 + 8))
+    (l, h)
+
+@wrapping
+fn finish128(lo: Int, hi: Int, len: Int, seed: Int) -> Xxh128 []
+    let low = lo + hi
+    let high = lo * xxh64.XXH64_PRIME_1 + hi * xxh64.XXH64_PRIME_4 + (len - seed) * xxh64.XXH64_PRIME_2
+    xxh3.digest128(avalanche3(low), 0 - avalanche3(high))
+
+@wrapping
+fn mid128(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Xxh128 []
+    var a = (len * xxh64.XXH64_PRIME_1, 0)
+    if len > 32
+        if len > 64
+            if len > 96
+                a = mix32(a.0, a.1, d, 48, len - 64, secret, 96, seed)
+            a = mix32(a.0, a.1, d, 32, len - 48, secret, 64, seed)
+        a = mix32(a.0, a.1, d, 16, len - 32, secret, 32, seed)
+    a = mix32(a.0, a.1, d, 0, len - 16, secret, 0, seed)
+    finish128(a.0, a.1, len, seed)
+
+@wrapping
+fn mid240_128(d: Bytes, len: Int, secret: Bytes, seed: Int) -> Xxh128 []
+    var a = (len * xxh64.XXH64_PRIME_1, 0)
+    for i in 0..4
+        a = mix32(a.0, a.1, d, 32 * i, 32 * i + 16, secret, 32 * i, seed)
+    a = (avalanche3(a.0), avalanche3(a.1))
+    for i in 4..len / 32
+        a = mix32(a.0, a.1, d, 32 * i, 32 * i + 16, secret, 3 + 32 * (i - 4), seed)
+    a = mix32(a.0, a.1, d, len - 16, len - 32, secret, 136 - 17 - 16, 0 - seed)
+    finish128(a.0, a.1, len, seed)

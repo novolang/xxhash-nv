@@ -1,10 +1,6 @@
 // xxh64_tests.nv — XXH64's word algebra, and the five ways it is not
 // XXH32 at double the width.
 //
-// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
-// assertion here reaches `not implemented: xxhash-nv.xxh64.<fn>`.
-// That is the expected result until the bodies land.
-//
 // THREE OF THE FIVE PRIMES HAVE THEIR HIGH BIT SET and `Int` is
 // signed, so they are written here as the decimals the source has to
 // write, with the hexadecimal in a comment beside each.

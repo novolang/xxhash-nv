@@ -1,10 +1,6 @@
 // xxh32_tests.nv — XXH32's word algebra, against the reference
 // implementation's own constants.
 //
-// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
-// assertion here reaches `not implemented: xxhash-nv.xxh32.<fn>`.
-// That is the expected result until the bodies land.
-//
 // THE DIGEST VECTORS ARE IN `xxhbytes_tests.nv`, because a digest of
 // anything but the empty input needs a `Bytes` and this module has
 // none.  What is here is the structure: the primes, the widths, the

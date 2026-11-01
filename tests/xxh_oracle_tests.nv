@@ -1,0 +1,155 @@
+// xxh_oracle_tests.nv — every width and every length path of the
+// package, against the reference library.
+//
+// The expected lines were produced by calling `libxxhash` 0.8.2 (the
+// reference C implementation) on the same bytes: XXH32, XXH64, XXH3 at
+// 64 bits unseeded, seeded and over a secret, and XXH3 at 128 bits
+// unseeded, seeded and over a secret.  The lengths sit on both sides of
+// every path boundary: 0, 1-3, 4-8, 9-16, 17-128, 129-240, and the long
+// path with zero, one and several scrambled blocks.
+//
+// The input at length `n` is byte `i` = `(i*131 + (i/8)*17 + 7) mod 256`.
+// The seed is `n*2654435761 + 12345` (XXH32 takes its low 32 bits) and
+// the secret is `n mod 50` bytes into the 300 bytes of the same
+// generator, `136 + n mod 100` bytes long.
+//
+// One line is: xxh32 xxh64 xxh3-64 xxh3-64-seeded xxh3-64-secret
+// xxh3-128 xxh3-128-seeded xxh3-128-secret, in the text the reference
+// tool prints, except the last field, which is the sixteen canonical
+// bytes the `_into` form writes.
+
+use std.test
+use std.bytes
+use xxhbytes
+
+fn gen(n: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        bytes.set_u8(b, i, (i * 131 + i / 8 * 17 + 7) & 255)
+    b
+
+fn secret_128_text(d: Bytes, k: Bytes) -> Str
+    match xxhbytes.hash3_128_with_secret_into(d, k, bytes.zeros(16))
+        Err(_)  => "refused"
+        // The canonical bytes: the low half first, each half little-endian.
+        Ok(out) => bytes.to_hex(out)
+
+fn secret_64_text(d: Bytes, k: Bytes) -> Str
+    match xxhbytes.hash3_64_with_secret(d, k)
+        Err(_) => "refused"
+        Ok(h)  => xxhbytes.text64(h)
+
+fn line(n: Int) -> Str
+    let d = gen(n)
+    let s = n * 2654435761 + 12345
+    let sec = gen(300)
+    let k = bytes.slice(sec, n % 50, n % 50 + 136 + n % 100)
+    let parts = [xxhbytes.text32(xxhbytes.hash32(d, s & 0xffffffff)),
+                 xxhbytes.text64(xxhbytes.hash64(d, s)),
+                 xxhbytes.text64(xxhbytes.hash3_64(d)),
+                 xxhbytes.text64(xxhbytes.hash3_64_seeded(d, s)),
+                 secret_64_text(d, k),
+                 xxhbytes.text128(xxhbytes.hash3_128(d)),
+                 xxhbytes.text128(xxhbytes.hash3_128_seeded(d, s)),
+                 secret_128_text(d, k)]
+    parts.join(" ")
+
+fn lengths() -> [Int]
+    [0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        7,
+        8,
+        9,
+        12,
+        15,
+        16,
+        17,
+        24,
+        31,
+        32,
+        33,
+        48,
+        63,
+        64,
+        65,
+        96,
+        97,
+        127,
+        128,
+        129,
+        160,
+        191,
+        192,
+        239,
+        240,
+        241,
+        255,
+        256,
+        500,
+        1023,
+        1024,
+        1025,
+        1100,
+        2047,
+        2048,
+        2049,
+        4096,
+        5000]
+
+fn expected() -> [Str]
+    ["a9458298 95584af7701f808d 2d06800538d394c2 a706d6c022c3723b c2a4b977935a1141 99aa06d3014798d86001c324468d497f 89280ae42c9456b2c426fd87a4f77c66 0616dac3293d1185e63a57115e26884e",
+     "281ac127 64c3a9131097b69d 4c5cca45d0f4811f 4917944ab9c1947a 70a403e75f39cb85 495b62073ef70ca44c5cca45d0f4811f dbd968aa32fc41f34917944ab9c1947a 85cb395fe703a470ec63d19a3b1c3d3e",
+     "82953e10 2fad753eb9488abc 29c60963cbfa4e6e 666391a666ddd9ab 91699763090e1663 f1b5eec902a1eb5e29c60963cbfa4e6e 274882e46fa6588d666391a666ddd9ab 63160e0963976991b928baf5a7827d51",
+     "045a782c 85cf6cb47b0a5d07 6e3e2670e61106ac 90d34ebd7f6adb25 cee82470a459e5b8 390cdc5b4a895dd76e3e2670e61106ac d478f18f564b808590d34ebd7f6adb25 b8e559a47024e8ceb8f87b53dbf4c6e1",
+     "0a0e8503 72a72c9f96e2bfb2 5c4c63133443d03f e03c12e76024968d 3b2beb34d68d0d60 aa6e2f274640a3f43d668af6f2a44d77 d90ed0d4d2160ed4ce4e3d729e5b2fe0 c32e51ca34a177f4f93c161c37648549",
+     "b828cf0b c63ce323f618ef21 49f5eb3111280b63 2e49a9839609e2bd 50d88c9d537d8dbe d9da89da8d7e169a62853c5f1a6eda6e 1f4d220e93fc70a3cae84f9954b00bef 3710eb8234610869337a468c4eec4513",
+     "0fe16582 dbbf02af1744b268 46a5c724d51fe43f 738b497280139d50 ae929aaf93e3ea30 9c62f06059404f491b174ad8d9a81f6b eeff66c220b404195042093c068f9d78 77ac06b8a708dc90c73c53ab5b38293f",
+     "0a66b18b a12b2364f2987ba7 f9fd4dd0b04d78f5 c1043fb5f204c267 01d3ec3e3d1e07de 6a86a3bda6af4e3d61ddbe7f31a6100d 544e9f1c17b0a79cbbd236108da563d8 4f4336e639f1fb8c8eff226b468acfd5",
+     "162c3156 cea8db730cbbf717 30513ed207b9c340 2284d55b30d8ebf4 8cd256f17a5c7bfd 5eb483f32bcb98ad448f666cf7e99f92 c00fd6bb87f058e71d8a03f02e4136fe 19f0a847f45836d56fca4dba1ee960a3",
+     "db7a7a59 09fbbc42ddec2810 e568104c8207bd19 56bba4f55bdce533 70757d53cd805609 8dc0804fca2c10119cb83ee9d87aef50 c910231921591fb5377d8c70e03c73cd 1d1723d3c5afe5a7bcf6d95ef37df2fd",
+     "be4cb46b 89a22fef1665dc0c ab5500eb621fede4 9de8654dbe9955c6 0011d73b095f3ba1 c65c20e71f89daf4c8e8a6e977ac84e7 7118b7f4794a4a09fef65835c6deb1fb ca42ba579f1e84362acc00168a17b4eb",
+     "f3fd2518 a156fb8be3160354 8adf25212dbe075a 6edd0fc0279c10a4 49136a7c36940dd0 e6e83b90832570dd87ee65cfb47bf743 a41c9a83e367d617dac41a135df83b32 29f03a2bfecfc58b1961db39c697b5d8",
+     "150b9cf2 bf457fd852981fd8 2d1d4b10cfd7b927 20dc6941dafba967 5acf75bc24f3bd56 d5a4089b223483be51f3ab6e559e795f 2e2d5e92b1e17814c6803f406eb9270d 0840930da37cea3e2f7a7152a690a353",
+     "9a86fbf8 b6e103ea556a8e49 b8c21dd75d6db847 d98c8bb88129d355 d611810d8e085861 7e2eb72803cc8c3171849058c0638902 075d63926880d30e8703166a194a9a72 a93891516c04b5fabfef90e7d7941c63",
+     "797beece 53d48310374ff77a 241e67f0821c8a45 4476b82d57ecfd9c 2a453a57565c215f 4caa8ec5e44e59171febe172a1c6dc42 2d499ddb305b10d60c7c044a6141f65f 21103000e87d8f51ded10765c10fb01a",
+     "940bc25f 744caf1b7e57a9f5 ac60d61de7d98146 439a7e9e9fe74e58 51790f665f8731e4 6022a88d7a964967627edc951e187680 6738adc57a7577b2282da9f46399e802 566a9da6ab15007272299be91e1ecffd",
+     "73d5873e 5f210b877a369750 fd0f77ca4ac4a812 91e788d1460bf750 1b6d42020f7fd99a 26503aa618944585201de6faf97e745d 03180cf8cb203019cba8982a8d77879c 306b34020138ca5ef40b174cdfe008c6",
+     "8e4b8b74 0aa1d6b079f514d9 ddfc62ff0cc31d9f 7d9a1aaa49ac249b 26d80197c0de89a2 6dc974265e04f2570c0993fae77c427e 77bb2f2efb687828ff0da32e3dd994ad a88bd42aaab355a032695b73264a57e5",
+     "b576c29d f6035ea6c4b67f78 a4ed0423f9b263c3 c5102a3bfd48cdae 62b0cb87a7cec626 d47ce7db457335675a9a721f86928a30 116a874c49cce15c5bfc993aeaabee6c 1645f13a44c2481d38d899b97aff9410",
+     "ab902250 ab587df662d4b73a 66a38e66471a80fc 9aaf87f59c7879ce fc2d5f88c341293f 230467b6a6522bbb0310ec86452cb9d2 7dc0ae43735e082b8086c41e3f7f723c c3ed5fd5700d5527cb0e95977bddfcab",
+     "da835db9 622f2c6bbda1abf5 c3cb289b21908452 b068611052893a0b 7b2b01e453f81f20 be2c779b5050b8f4f7cb5e3c2cfa35de 23cbc5ce00362a527adbdc85f9e51b08 1cbc14e1fb2a64678cbe967b43a63eed",
+     "67d7b43b f1257ea9c420c0ea 145aef8c101d196f e9a463240324df90 62c84ec6d840accd 0b13f2b8b15764ff77d6f1309e711e54 891a38010c278d050c43a5489b821ce4 91f41321b9d69950c6935b09a48cc317",
+     "60475bf2 3882bf0569ab458b 795d8870548dc4d7 c921ceb54603612f 83a70842575454d7 dc8f677527e8192a31af18334b19ba45 f7301a7f0f89903b2f907afb9a174fec 789577eb3c20793b237c18bbdba8b339",
+     "1fc4a673 7ff8d62fb6714cbb c16f5467b1d0a988 9014818a4181de5f 03e93853b30ede58 a9c44c0e7cfdea074fdfe5e68be3b434 22f9fc496cb9816f8c0560fab83dd670 0066c2eccc55de56fa0b2d14d759d032",
+     "45013cbf 815fd6ade04648e9 2f1201c2c47daae3 6e311938c6bc1a91 6640794740452b99 e56399b9803d9e021460dd13a343a8a0 6b99917b5d51b140b5f9547308089a5f 7d2c76143f893538e4a13c30b2bd4440",
+     "25bf6738 b5037e7369df6191 ecbc59d789b2b1e4 489fbccbf9c72f34 97e88cd92ca39bcf 4cc9ad5fd84e8a109020c417cc7c249a 0bb42195e7870c248d8c3c288d68d909 43fee34a134c83512ead66fcc65212b7",
+     "9cae0efb 144f9a9d900ce385 cd950b4d0a325770 28bd29dc211fe146 7b1cc3b46ac89dbc 5a559f1bdb0311e59cddce3c6f5d0d45 307526c174fb55585777f5428c758f71 2c7de2d4ea48575c68a4bd47a20e82c7",
+     "70d7ce21 935fb74bb19d95cf 564e7ec21982e218 9518253790eeaf7d 0661fba290c83e49 fd47b96377674bcf1a8982f701c45223 7a1104145e3c914ad0b256a61d9e28ca 7916b49677cabf400cfbe2d35dd749b6",
+     "f3823098 04fd2639e5ceefdd b1441b20f9080510 46b2f8cff9d5343d f39b817aa4db946b 52c24d8e0cb9507881d14549abcb8515 d5e8ad3a670ef5a7b2c49b75acd6af87 a7dfd2fe3e29f0e6bd1e75716269ef08",
+     "b94f7d15 7ef1c70c94545353 4bb76579efb73ed2 d996d844ce53ac5c 0d23d960fff6acf1 370824e2038b1ef086ff92df523a3fe6 f2371b98a17d37c5cd5fb58406f302bd ceeaacaa491d66ac9fc9bc9b748d9dcf",
+     "d5db3818 58cc9840da4c9cca 3b20bc131daf9d46 90157a5008704ee8 3ec4b0877f18daa6 f786fdbfd77bb5418e374d14a1cabc2c 2e18796df22d3db8864383c6855c8fc1 cc0f79e34e0c911c888936b44f6fad94",
+     "35ae33cc a46aaf482c8f0be3 b303ea29a5d81afb 8e9810ce6245cd2a ef73105d1946c513 2907eb7c0e5b92e1b303ea29a5d81afb 9b1ba196b7ad49dd8e9810ce6245cd2a 13c546195d1073efaf668d5f31120919",
+     "b3742578 46d3cf06b88e1fdf 9cfeab6c9cd9b749 ced7981315f63331 a0b17a0d27bda5bf 82ac97d3c1cb22709cfeab6c9cd9b749 6f7d1d24a43b01afced7981315f63331 bfa5bd270d7ab1a02079470de8f854a1",
+     "77f215b8 0700b74b5e3d9bfe e0b6e7fe648ba915 97c71bb10306fd34 9b8efa29aa40cc5f 261827eae1e97b1fe0b6e7fe648ba915 b259310e6a4725d497c71bb10306fd34 5fcc40aa29fa8e9bfafe861cc4149972",
+     "bed2a0ed 0ff5a7e81fbb4a92 7c675388d7fb9487 afea9b6b811b9bad 1b65ed4b9750b3d7 32662bd86444a0d37c675388d7fb9487 a7cf96f886683372afea9b6b811b9bad d7b350974bed651b703853146ccd01d4",
+     "f6cde4be 526a9c8a686a4c08 612b627abdac0332 64503033d5a464c8 cd8f2d80018dfd34 3e71fc66250248cd612b627abdac0332 925bbe5b15aeb55f64503033d5a464c8 34fd8d01802d8fcde853e950891495c7",
+     "f8a2a46d ccfde86343e73bcf 59f4d7cbff58cffa 72d4b3f0ee954d90 5b12df7be11ceec9 e851c850ca2bfa1b59f4d7cbff58cffa 6668e0ac0772a47a72d4b3f0ee954d90 c9ee1ce17bdf125b22ac963fd3d6f67e",
+     "93ea39bd 4044535791e3c892 c7113800d3982ecc cfd36e58c2fb6c09 37cbc1b255ec22aa 5816dbc16485098fc7113800d3982ecc eb3a6059f3a91f7dcfd36e58c2fb6c09 aa22ec55b2c1cb377ab3ed4b238c1386",
+     "9f95b5ae 439389754accd350 4a7dd823c9149974 83e4ba846faa7460 a815b4191b9b0e07 10f78108b734bb874a7dd823c9149974 c53d223d850d4a6383e4ba846faa7460 070e9b1b19b415a8331d56a974cf61db",
+     "75696da1 bf5c06e5b1e9356f 77f0ac29762b9cd0 08361adb4b4f0d45 297a9e459e8eb5ee 60f94c5bc9900e9477f0ac29762b9cd0 fbf20e957694ba1408361adb4b4f0d45 eeb58e9e459e7a295aeb644c5af1ccf0",
+     "4b0f8df5 bb7f305458fc9442 a5970626cf07166c dba6d89b52fc1338 a6bee43f8a167df3 1b0cea0771b0de8aa5970626cf07166c e1e881818b2b3108dba6d89b52fc1338 f37d168a3fe4bea628a94d061632da82",
+     "36dc1cdf 601601d14b2cf8b6 42459b393b5357a8 1bfc829b614102d6 37049ab9a78af74a 588577ca9347a03642459b393b5357a8 61eb2b71e357fef81bfc829b614102d6 4af78aa7b99a04377339f36b38e51197",
+     "558aa23b 90773fef8609338e 3350d8d737db37c7 65518541cc32dffc 2f8c0f3edf7a4988 72ba4314870a49163350d8d737db37c7 db62de6bd2d9d37065518541cc32dffc 88497adf3e0f8c2f24ca40b572458cb0",
+     "14579f9e d93df573293d8985 8d475d47344da834 0c7f55e262f04a4d aaa0f21b0e4e6bc6 90516a89e9c96e018d475d47344da834 f02b7fba38cba15c0c7f55e262f04a4d c66b4e0e1bf2a0aafa3e014699bd9d1d"]
+
+@test
+fn test_every_width_and_path_matches_the_reference() [io]
+    let ls = lengths()
+    let want = expected()
+    for i in 0..ls.len()
+        test.case("input of ${ls[i]} bytes")
+        test.assert_eq_str(line(ls[i]), want[i])

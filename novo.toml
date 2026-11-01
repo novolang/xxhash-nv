@@ -1,15 +1,13 @@
 [package]
 name        = "xxhash-nv"
-version     = "0.0.2"
-description = "xxHash for novo-lang: XXH32, XXH64 and XXH3 as three separate types with no shared entry point, because a format names ONE of them and two four-byte checksums over the same bytes are different numbers.  Streaming @value states with one-shot forms, seeds, and XXH3's secret and size-dependent paths declared and scoped.  The copy zstd-nv and lz4-nv each carry privately.  Interface only — every body is a todo()."
+version     = "0.1.0"
+description = "xxHash for novo-lang: XXH32, XXH64 and XXH3 as three separate types with no shared entry point, because a format names ONE of them and two four-byte checksums over the same bytes are different numbers.  Streaming @value states with one-shot forms, seeds, and XXH3's secret and size-dependent paths declared and scoped.  The copy zstd-nv and lz4-nv each carry privately."
 license     = "Apache-2.0"
 
-# An INTERFACE release: every `pub fn` body is a `todo()`, so the
-# signatures and the effect rows are published and nothing is
-# implemented.  `novo pkg publish` recognises the shape and requires
-# both the draft stability and the 0.0.x version; the first
-# implementation is the 0.1.0 published over it.
-stability   = "draft"
+# `experimental` because no program outside this repository has used the
+# package yet.  The digests are checked against the reference library
+# (`libxxhash` 0.8.2) at every width and every length path.
+stability   = "experimental"
 
 # `core`.  xxHash is multiplication, rotation and XOR over fixed
 # primes.  There is no entropy source, no clock and nothing that opens
@@ -20,6 +18,12 @@ stability   = "draft"
 # algebra with no `Bytes` anywhere in them — and the README says which
 # half a device gets and why XXH3 is not in it.
 layer       = "core"
+
+# The modules that take `Bytes` or carry the error enum, which are heap
+# objects, and `xxh3`, which is outside the device claim.  `xxh32` and
+# `xxh64` are the modules the device build covers, and
+# `tests/embedded_probe.nv` builds them for a Cortex-M4.
+host_modules = ["xxh3", "xxhbytes", "xxherr"]
 
 category    = "compression"
 

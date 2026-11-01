@@ -1,10 +1,6 @@
 // xxh3_tests.nv — XXH3's constants, its four length paths, and its
 // 128-bit digest.
 //
-// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
-// assertion here reaches `not implemented: xxhash-nv.xxh3.<fn>`.
-// That is the expected result until the bodies land.
-//
 // THE DIGEST VECTORS ARE IN `xxhbytes_tests.nv`.  What is here is the
 // boundary arithmetic — the four length paths and the secret's
 // minimum — because those are the numbers an implementer lines up

@@ -1,9 +1,6 @@
 // xxh64.nv — XXH64, in word algebra with no `Bytes` and no `Str`
 // anywhere in the module.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // XXH64 IS NOT XXH32 AT DOUBLE THE WIDTH.  The differences are real
 // and none of them is a width:
 //
@@ -33,6 +30,9 @@
 //
 // THIS IS ONE OF THE TWO MODULES A DEVICE GETS — `start`, `feed_byte`
 // and `finish` are a whole hash with no allocator behind them.
+
+use std.bits
+use std.int
 
 // ── Sizes ────────────────────────────────────────────────────────────
 
@@ -107,8 +107,9 @@ struct Xxh64State
 // fn main() [io]
 //     println("${xxh64.rotl(1, 1)}")                       // 2
 // ```
-pub fn rotl(x: Int, n: Int) -> Int []
-    todo("xxhash-nv.xxh64.rotl")
+pub @tier(embedded)
+fn rotl(x: Int, n: Int) -> Int []
+    bits.rotate_left(x, n)
 
 // One lane's round: `rotl(acc + input * PRIME_2, 31) * PRIME_1`.
 //
@@ -118,8 +119,9 @@ pub fn rotl(x: Int, n: Int) -> Int []
 // fn main() [io]
 //     println("${xxh64.round(0, 0) == 0}")                 // true
 // ```
-pub fn round(acc: Int, input: Int) -> Int []
-    todo("xxhash-nv.xxh64.round")
+pub @tier(embedded)
+fn round(acc: Int, input: Int) -> Int []
+    int.wrapping_mul(rotl(int.wrapping_add(acc, int.wrapping_mul(input, XXH64_PRIME_2)), 31), XXH64_PRIME_1)
 
 // The merge step XXH32 has no counterpart for: `(h XOR round(0, lane))
 // * PRIME_1 + PRIME_4`.
@@ -135,8 +137,9 @@ pub fn round(acc: Int, input: Int) -> Int []
 // fn main() [io]
 //     println("${xxh64.merge_lane(0, 0) == xxh64.XXH64_PRIME_4}")   // true
 // ```
-pub fn merge_lane(h: Int, lane: Int) -> Int []
-    todo("xxhash-nv.xxh64.merge_lane")
+pub @tier(embedded)
+fn merge_lane(h: Int, lane: Int) -> Int []
+    int.wrapping_add(int.wrapping_mul(h ^ round(0, lane), XXH64_PRIME_1), XXH64_PRIME_4)
 
 // The final mix: XOR-shift-multiply at 33, 29 and 32.
 //
@@ -146,8 +149,13 @@ pub fn merge_lane(h: Int, lane: Int) -> Int []
 // fn main() [io]
 //     println("${xxh64.avalanche(0)}")                     // 0
 // ```
-pub fn avalanche(h: Int) -> Int []
-    todo("xxhash-nv.xxh64.avalanche")
+pub @tier(embedded)
+fn avalanche(h: Int) -> Int []
+    var x = h ^ (h >>> 33)
+    x = int.wrapping_mul(x, XXH64_PRIME_2)
+    x = x ^ (x >>> 29)
+    x = int.wrapping_mul(x, XXH64_PRIME_3)
+    x ^ (x >>> 32)
 
 // ── Building and reading a state ─────────────────────────────────────
 
@@ -162,32 +170,54 @@ pub fn avalanche(h: Int) -> Int []
 // fn main() [io]
 //     println("${xxh64.seed(xxh64.start(7))}")             // 7
 // ```
-pub fn start(seed: Int) -> Xxh64State []
-    todo("xxhash-nv.xxh64.start")
+pub @tier(embedded)
+fn start(seed: Int) -> Xxh64State []
+    Xxh64State { v: [int.wrapping_add(int.wrapping_add(seed, XXH64_PRIME_1), XXH64_PRIME_2),
+                     int.wrapping_add(seed, XXH64_PRIME_2),
+                     seed,
+                     int.wrapping_sub(seed, XXH64_PRIME_1)],
+                 buf: [0, 0, 0, 0], buffered: 0, total: 0, seed: seed }
 
 // Lane `i`, for `i` in 0 ..= 3.
-pub fn lane(st: Xxh64State, i: Int) -> Int []
-    todo("xxhash-nv.xxh64.lane")
+pub @tier(embedded)
+fn lane(st: Xxh64State, i: Int) -> Int []
+    if i < 0 or i >= XXH64_LANES
+        0
+    else
+        st.v[i]
 
 // The same state with lane `i` set.
-pub fn with_lane(st: Xxh64State, i: Int, v: Int) -> Xxh64State []
-    todo("xxhash-nv.xxh64.with_lane")
+pub @tier(embedded)
+fn with_lane(st: Xxh64State, i: Int, v: Int) -> Xxh64State []
+    if i < 0 or i >= XXH64_LANES
+        st
+    else
+        var r = st
+        r.set_v(i, v)
+        r
 
 // Buffered byte `j`, for `j` in 0 ..= 31.
-pub fn buffer_byte(st: Xxh64State, j: Int) -> Int []
-    todo("xxhash-nv.xxh64.buffer_byte")
+pub @tier(embedded)
+fn buffer_byte(st: Xxh64State, j: Int) -> Int []
+    if j < 0 or j >= XXH64_STRIPE_BYTES
+        0
+    else
+        (st.buf[j / 8] >>> (8 * (j % 8))) & 0xFF
 
 // Bytes of the stripe buffer that hold input: 0 ..= 31.
-pub fn buffered(st: Xxh64State) -> Int []
-    todo("xxhash-nv.xxh64.buffered")
+pub @tier(embedded)
+fn buffered(st: Xxh64State) -> Int []
+    st.buffered
 
 // Every byte fed so far.
-pub fn total(st: Xxh64State) -> Int []
-    todo("xxhash-nv.xxh64.total")
+pub @tier(embedded)
+fn total(st: Xxh64State) -> Int []
+    st.total
 
 // The seed this state started from.
-pub fn seed(st: Xxh64State) -> Int []
-    todo("xxhash-nv.xxh64.seed")
+pub @tier(embedded)
+fn seed(st: Xxh64State) -> Int []
+    st.seed
 
 // ── The streaming hash, with no `Bytes` in it ────────────────────────
 
@@ -199,8 +229,15 @@ pub fn seed(st: Xxh64State) -> Int []
 // fn main() [io]
 //     println("${xxh64.total(xxh64.feed_byte(xxh64.start(0), 0x61))}")   // 1
 // ```
-pub fn feed_byte(st: Xxh64State, b: Int) -> Xxh64State []
-    todo("xxhash-nv.xxh64.feed_byte")
+pub @tier(embedded)
+fn feed_byte(st: Xxh64State, b: Int) -> Xxh64State []
+    var r = st
+    r.put(b)
+    if r.buffered == XXH64_STRIPE_BYTES
+        for i in 0..XXH64_LANES
+            r.set_v(i, round(r.v[i], r.buf[i]))
+        r.set_buffered(0)
+    r
 
 // The digest: the four lanes merged, the length mixed in, the tail
 // consumed eight then four then one byte at a time, and the avalanche.
@@ -215,14 +252,39 @@ pub fn feed_byte(st: Xxh64State, b: Int) -> Xxh64State []
 // fn main() [io]
 //     println("${xxh64.finish(xxh64.start(0)) != 0}")      // true
 // ```
-pub fn finish(st: Xxh64State) -> Int []
-    todo("xxhash-nv.xxh64.finish")
+pub @tier(embedded)
+fn finish(st: Xxh64State) -> Int []
+    var h = 0
+    if st.total >= XXH64_STRIPE_BYTES
+        h = int.wrapping_add(int.wrapping_add(rotl(st.v[0], 1), rotl(st.v[1], 7)),
+                             int.wrapping_add(rotl(st.v[2], 12), rotl(st.v[3], 18)))
+        for i in 0..XXH64_LANES
+            h = merge_lane(h, st.v[i])
+    else
+        h = int.wrapping_add(st.seed, XXH64_PRIME_5)
+    h = int.wrapping_add(h, st.total)
+    let words = st.buffered / 8
+    for k in 0..words
+        h = int.wrapping_add(int.wrapping_mul(rotl(h ^ round(0, st.buf[k]), 27), XXH64_PRIME_1), XXH64_PRIME_4)
+    var pos = words * 8
+    if st.buffered - pos >= 4
+        let half = (st.buf[pos / 8] >>> (8 * (pos % 8))) & 0xFFFFFFFF
+        h = int.wrapping_add(int.wrapping_mul(rotl(h ^ int.wrapping_mul(half, XXH64_PRIME_1), 23), XXH64_PRIME_2),
+            XXH64_PRIME_3)
+        pos = pos + 4
+    for j in pos..st.buffered
+        h = int.wrapping_mul(rotl(h ^ int.wrapping_mul(buffer_byte(st, j), XXH64_PRIME_5), 11), XXH64_PRIME_1)
+    avalanche(h)
 
 // ── Reading a digest out ─────────────────────────────────────────────
 
 // Byte `i` of a finished digest, for `i` in 0 ..= 7, LITTLE-endian.
-pub fn byte_of(h: Int, i: Int) -> Int []
-    todo("xxhash-nv.xxh64.byte_of")
+pub @tier(embedded)
+fn byte_of(h: Int, i: Int) -> Int []
+    if i < 0 or i >= XXH64_DIGEST_BYTES
+        0
+    else
+        (h >>> (8 * i)) & 0xFF
 
 // The low thirty-two bits of a 64-bit digest.
 //
@@ -238,5 +300,28 @@ pub fn byte_of(h: Int, i: Int) -> Int []
 // fn main() [io]
 //     println("${xxh64.low32(0x1122334455667788)}")        // 1432778632
 // ```
-pub fn low32(h: Int) -> Int []
-    todo("xxhash-nv.xxh64.low32")
+pub @tier(embedded)
+fn low32(h: Int) -> Int []
+    h & 0xFFFFFFFF
+
+// The writers.  A `@value` struct is immutable outside a `var self`
+// method, so every change to the state is one of these.
+impl Xxh64State
+    // Sets accumulator `i`.
+    @tier(embedded)
+    fn set_v(var self, i: Int, v: Int)
+        self.v[i] = v
+
+    // Sets how many bytes of the stripe buffer hold input.
+    @tier(embedded)
+    fn set_buffered(var self, n: Int)
+        self.buffered = n
+
+    // Appends one byte to the stripe buffer and counts it.
+    @tier(embedded)
+    fn put(var self, b: Int)
+        let w = self.buffered / 8
+        let sh = 8 * (self.buffered % 8)
+        self.buf[w] = (self.buf[w] & ((0xFF << sh) ^ -1)) | ((b & 0xFF) << sh)
+        self.buffered = self.buffered + 1
+        self.total = self.total + 1

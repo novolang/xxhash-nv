@@ -1,9 +1,6 @@
 // xxh3.nv — XXH3, at 64 and 128 bits, with its secret and its four
 // size-dependent paths declared.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // XXH3 IS A THIRD ALGORITHM, not a third width.  It shares the family
 // name and nothing else: a 192-byte secret instead of five primes,
 // wide accumulators designed for SIMD, and FOUR SEPARATE CODE PATHS
@@ -43,6 +40,11 @@
 // 256 bytes plus a 192-byte secret and its block-accumulation rule is
 // a second algorithm's worth of detail — see the README's "What is
 // outside".
+
+use std.bytes
+use xxh32
+use xxh64
+use xxherr
 
 // ── The secret ───────────────────────────────────────────────────────
 
@@ -156,15 +158,15 @@ struct Xxh3State
 //     println("${xxh3.digest_high(xxh3.digest128(1, 2))}")  // 2
 // ```
 pub fn digest128(low: Int, high: Int) -> Xxh128 []
-    todo("xxhash-nv.xxh3.digest128")
+    Xxh128 { low: low, high: high }
 
 // The low 64 bits of a 128-bit digest.
 pub fn digest_low(d: Xxh128) -> Int []
-    todo("xxhash-nv.xxh3.digest_low")
+    d.low
 
 // The high 64 bits of a 128-bit digest.
 pub fn digest_high(d: Xxh128) -> Int []
-    todo("xxhash-nv.xxh3.digest_high")
+    d.high
 
 // Byte `i` of a 128-bit digest in its canonical order, for `i` in
 // 0 ..= 15: the low half first, each half little-endian.
@@ -180,29 +182,44 @@ pub fn digest_high(d: Xxh128) -> Int []
 //     println("${xxh3.digest_byte(xxh3.digest128(0x11, 0), 0)}")   // 17
 // ```
 pub fn digest_byte(d: Xxh128, i: Int) -> Int []
-    todo("xxhash-nv.xxh3.digest_byte")
+    if i < 0 or i >= XXH3_DIGEST_BYTES_128
+        0
+    else if i < 8
+        (d.low >>> (8 * i)) & 0xFF
+    else
+        (d.high >>> (8 * (i - 8))) & 0xFF
 
 // ── The accumulator bank ─────────────────────────────────────────────
 
 // The bank as the long path starts it, from the default secret.
 pub fn acc_start() -> Xxh3State []
-    todo("xxhash-nv.xxh3.acc_start")
+    Xxh3State { acc: [xxh32.XXH32_PRIME_3, xxh64.XXH64_PRIME_1, xxh64.XXH64_PRIME_2, xxh64.XXH64_PRIME_3,
+                      xxh64.XXH64_PRIME_4, xxh32.XXH32_PRIME_2, xxh64.XXH64_PRIME_5, xxh32.XXH32_PRIME_1],
+                stripe: 0, total: 0 }
 
 // Lane `i` of the bank, for `i` in 0 ..= 7.
 pub fn acc_lane(st: Xxh3State, i: Int) -> Int []
-    todo("xxhash-nv.xxh3.acc_lane")
+    if i < 0 or i >= XXH3_ACC_LANES
+        0
+    else
+        st.acc[i]
 
 // The same bank with lane `i` set.
 pub fn with_acc_lane(st: Xxh3State, i: Int, v: Int) -> Xxh3State []
-    todo("xxhash-nv.xxh3.with_acc_lane")
+    if i < 0 or i >= XXH3_ACC_LANES
+        st
+    else
+        var r = st
+        r.set_acc(i, v)
+        r
 
 // Stripes folded since the last scramble: 0 ..= 15.
 pub fn stripe(st: Xxh3State) -> Int []
-    todo("xxhash-nv.xxh3.stripe")
+    st.stripe
 
 // Bytes accumulated so far.
 pub fn total(st: Xxh3State) -> Int []
-    todo("xxhash-nv.xxh3.total")
+    st.total
 
 // ── Which path an input takes ────────────────────────────────────────
 
@@ -222,7 +239,14 @@ pub fn total(st: Xxh3State) -> Int []
 //     println("${xxh3.path_for(16)}")                      // 0
 // ```
 pub fn path_for(len: Int) -> Int []
-    todo("xxhash-nv.xxh3.path_for")
+    if len <= XXH3_LEN_SHORT_MOST
+        0
+    else if len <= XXH3_LEN_MID_MOST
+        1
+    else if len <= XXH3_LEN_MID128_MOST
+        2
+    else
+        3
 
 // Whether a custom secret is long enough.
 //
@@ -236,4 +260,15 @@ pub fn path_for(len: Int) -> Int []
 //         None => println("ok")
 // ```
 pub fn check_secret(secret: Bytes) -> ?XxhError []
-    todo("xxhash-nv.xxh3.check_secret")
+    let got = bytes.len(secret)
+    if got < XXH3_SECRET_BYTES_LEAST
+        Some(XxhSecretTooShort(got, XXH3_SECRET_BYTES_LEAST))
+    else
+        None
+
+// The writer.  A `@value` struct is immutable outside a `var self`
+// method.
+impl Xxh3State
+    // Sets accumulator `i`.
+    fn set_acc(var self, i: Int, v: Int)
+        self.acc[i] = v

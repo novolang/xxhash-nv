@@ -1,10 +1,6 @@
 // xxhbytes_tests.nv — the digests, and the exact calls zstd-nv and
 // lz4-nv delete a module for.
 //
-// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
-// assertion here reaches `not implemented: xxhash-nv.<module>.<fn>`.
-// That is the expected result until the bodies land.
-//
 // THE VECTORS ARE THE REFERENCE IMPLEMENTATION'S.  xxHash has no
 // standards document for XXH3 — the project's own source IS the
 // definition, with the output guaranteed stable since v0.8.0 — so the
@@ -19,9 +15,8 @@
 // table is over a hundred values; copying that many numbers by hand is
 // how a wrong constant gets published, and a wrong constant in a test
 // file is worse than a missing one — it sends an implementer looking
-// for a bug in correct code.  The implementation lane generates the
-// table from the reference binary and commits it here as its first
-// step.  What IS asserted below without a table is every structural
+// for a bug in correct code.  The table is in `xxh_oracle_tests.nv`, generated from the
+// reference library.  What IS asserted below without a table is every structural
 // property: chunking invisibility, seed sensitivity, the length paths,
 // and the two consumers' exact calls.
 //

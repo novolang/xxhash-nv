@@ -1,0 +1,155 @@
+// xxh_edges_tests.nv — what the vectors do not reach: ranges that run
+// off the buffer, indexes outside a state, buffers too small for a
+// digest, secrets too short, and chunking at every split.
+
+use std.test
+use std.bytes
+use xxh3
+use xxh32
+use xxh64
+use xxherr
+use xxhbytes
+
+fn gen(n: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        bytes.set_u8(b, i, (i * 131 + i / 8 * 17 + 7) & 255)
+    b
+
+@test
+fn test_chunking_is_invisible_at_every_split() [io]
+    let d = gen(100)
+    test.case("XXH32 in two pieces equals XXH32 in one, for every split point")
+    let whole32 = xxhbytes.hash32(d, 5)
+    for cut in 0..101
+        let a = xxhbytes.feed32_range(xxh32.start(5), d, 0, cut)
+        let b = xxhbytes.feed32_range(a, d, cut, 100 - cut)
+        test.assert_eq(xxh32.finish(b), whole32)
+
+    test.case("and so is XXH64")
+    let whole64 = xxhbytes.hash64(d, 5)
+    for cut in 0..101
+        let a = xxhbytes.feed64_range(xxh64.start(5), d, 0, cut)
+        let b = xxhbytes.feed64_range(a, d, cut, 100 - cut)
+        test.assert_eq(xxh64.finish(b), whole64)
+
+    test.case("a hash of a range is the hash of the slice")
+    test.assert_eq(xxhbytes.hash32_range(d, 10, 40, 0), xxhbytes.hash32(bytes.slice(d, 10, 50), 0))
+    test.assert_eq(xxhbytes.hash64_range(d, 10, 40, 0), xxhbytes.hash64(bytes.slice(d, 10, 50), 0))
+
+@test
+fn test_a_range_off_the_buffer_hashes_what_exists() [io]
+    let d = gen(20)
+    let whole = xxhbytes.hash32(d, 0)
+
+    test.case("a negative offset starts at the front")
+    test.assert_eq(xxhbytes.hash32_range(d, -5, 20, 0), whole)
+
+    test.case("an offset past the end is an empty range")
+    test.assert_eq(xxhbytes.hash32_range(d, 99, 5, 0), xxhbytes.hash32(bytes.zeros(0), 0))
+
+    test.case("a negative length is an empty range")
+    test.assert_eq(xxhbytes.hash32_range(d, 3, -1, 0), xxhbytes.hash32(bytes.zeros(0), 0))
+
+    test.case("a length past the end stops at the end")
+    test.assert_eq(xxhbytes.hash32_range(d, 0, 500, 0), whole)
+
+@test
+fn test_a_state_refuses_an_index_outside_itself() [io]
+    test.case("XXH32 lanes and buffer bytes read as zero outside their range")
+    let a = xxh32.start(0)
+    test.assert_eq(xxh32.lane(a, -1), 0)
+    test.assert_eq(xxh32.lane(a, 4), 0)
+    test.assert_eq(xxh32.buffer_byte(a, -1), 0)
+    test.assert_eq(xxh32.buffer_byte(a, 16), 0)
+    test.assert_eq(xxh32.lane(xxh32.with_lane(a, 9, 5), 0), xxh32.lane(a, 0))
+    test.assert_eq(xxh32.byte_of(0x11223344, 4), 0)
+    test.assert_eq(xxh32.byte_of(0x11223344, -1), 0)
+
+    test.case("XXH64 the same")
+    let b = xxh64.start(0)
+    test.assert_eq(xxh64.lane(b, -1), 0)
+    test.assert_eq(xxh64.lane(b, 4), 0)
+    test.assert_eq(xxh64.buffer_byte(b, -1), 0)
+    test.assert_eq(xxh64.buffer_byte(b, 32), 0)
+    test.assert_eq(xxh64.lane(xxh64.with_lane(b, 9, 5), 0), xxh64.lane(b, 0))
+    test.assert_eq(xxh64.byte_of(0x11223344, 8), 0)
+    test.assert_eq(xxh64.byte_of(0x11223344, -1), 0)
+
+    test.case("XXH3 accumulators and digest bytes the same")
+    let c = xxh3.acc_start()
+    test.assert_eq(xxh3.acc_lane(c, -1), 0)
+    test.assert_eq(xxh3.acc_lane(c, 8), 0)
+    test.assert_eq(xxh3.acc_lane(xxh3.with_acc_lane(c, 2, 77), 2), 77)
+    test.assert_eq(xxh3.acc_lane(xxh3.with_acc_lane(c, 8, 77), 0), xxh3.acc_lane(c, 0))
+    test.assert_eq(xxh3.stripe(c), 0)
+    test.assert_eq(xxh3.total(c), 0)
+    test.assert_eq(xxh3.digest_byte(xxh3.digest128(1, 2), 16), 0)
+    test.assert_eq(xxh3.digest_byte(xxh3.digest128(1, 2), -1), 0)
+    test.assert_eq(xxh3.digest_byte(xxh3.digest128(1, 0x0302), 8), 2)
+    test.assert_eq(xxh3.digest_byte(xxh3.digest128(1, 0x0302), 9), 3)
+
+@test
+fn test_an_output_buffer_that_is_too_small_is_refused() [io]
+    test.case("four bytes for an XXH32")
+    match xxhbytes.digest32_into(1, bytes.zeros(3))
+        Ok(_)  => test.fail("three bytes cannot hold a 32-bit digest")
+        Err(e) =>
+            match e
+                XxhOutputTooSmall(want, have) =>
+                    test.assert_eq(want, 4)
+                    test.assert_eq(have, 3)
+                _                             => test.fail("a short buffer is XxhOutputTooSmall")
+
+    test.case("eight bytes for an XXH64")
+    match xxhbytes.digest64_into(1, bytes.zeros(7))
+        Ok(_)  => test.fail("seven bytes cannot hold a 64-bit digest")
+        Err(e) => test.assert_eq_str(xxherr.describe(e), "xxhash: the digest is 8 bytes and the output buffer holds 7")
+
+    test.case("sixteen bytes for an XXH3 digest")
+    match xxhbytes.digest128_into(xxh3.digest128(1, 2), bytes.zeros(15))
+        Ok(_)  => test.fail("fifteen bytes cannot hold a 128-bit digest")
+        Err(_) => test.assert(true)
+
+    test.case("a larger buffer answers the written prefix only")
+    match xxhbytes.digest32_into(0x11223344, bytes.zeros(8))
+        Err(_) => test.fail("eight bytes holds a 32-bit digest")
+        Ok(d)  => test.assert_eq_str(bytes.to_hex(d), "44332211")
+
+@test
+fn test_a_secret_below_the_least_is_refused() [io]
+    let short = bytes.zeros(135)
+    test.case("the 64-bit form")
+    match xxhbytes.hash3_64_with_secret(gen(10), short)
+        Ok(_)  => test.fail("135 bytes is below 136")
+        Err(e) =>
+            match e
+                XxhSecretTooShort(got, least) =>
+                    test.assert_eq(got, 135)
+                    test.assert_eq(least, 136)
+                _                             => test.fail("a short secret is XxhSecretTooShort")
+
+    test.case("the 128-bit form")
+    match xxhbytes.hash3_128_with_secret_into(gen(10), short, bytes.zeros(16))
+        Ok(_)  => test.fail("135 bytes is below 136")
+        Err(_) => test.assert(true)
+
+    test.case("exactly 136 is enough")
+    match xxhbytes.hash3_64_with_secret(gen(300), bytes.zeros(136))
+        Ok(_)  => test.assert(true)
+        Err(_) => test.fail("136 bytes is the least")
+
+@test
+fn test_a_seed_of_zero_is_the_unseeded_hash() [io]
+    let d = gen(1500)
+    test.assert_eq(xxhbytes.hash3_64_seeded(d, 0), xxhbytes.hash3_64(d))
+    test.assert_eq(xxh3.digest_low(xxhbytes.hash3_128_seeded(d, 0)), xxh3.digest_low(xxhbytes.hash3_128(d)))
+    test.assert(xxhbytes.hash3_64_seeded(d, 1) != xxhbytes.hash3_64(d))
+
+@test
+fn test_the_text_forms() [io]
+    test.assert_eq_str(xxhbytes.text32(0x02cc5d05), "02cc5d05")
+    test.assert_eq_str(xxhbytes.text64(-1), "ffffffffffffffff")
+    test.assert_eq_str(xxhbytes.text128(xxh3.digest128(2, 1)), "00000000000000010000000000000002")
+    test.assert_eq_str(xxherr.describe(XxhSeedAndSecretBothGiven),
+        "xxhash: a seed and a secret were both given, and they are the same knob")

@@ -1,9 +1,6 @@
 // xxh32.nv — XXH32, in word algebra with no `Bytes` and no `Str`
 // anywhere in the module.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // THIS IS ONE OF THE TWO MODULES A DEVICE GETS, and what it gets is a
 // WHOLE hash: `start`, `feed_byte`, `finish`.  A bootloader checking a
 // firmware image against an LZ4 frame's header byte reads a byte,
@@ -33,6 +30,8 @@
 // HASH.  It detects accidental corruption very well; an adversary who
 // can choose the bytes can produce a collision in seconds.  Every
 // format that uses it says exactly that much, and so does the README.
+
+use std.int
 
 // ── Sizes ────────────────────────────────────────────────────────────
 
@@ -102,6 +101,12 @@ struct Xxh32State
     // The seed this state started from.
     seed: Int
 
+// The low 32 bits of the product of two words.  `Int` traps on
+// overflow, so the multiply wraps and the mask keeps the word.
+@tier(embedded)
+fn mul(a: Int, b: Int) -> Int []
+    int.wrapping_mul(a, b) & XXH32_WORD_MASK
+
 // ── The arithmetic ───────────────────────────────────────────────────
 
 // `x` masked to 32 bits.
@@ -112,8 +117,9 @@ struct Xxh32State
 // fn main() [io]
 //     println("${xxh32.mask(0x1ffffffff)}")
 // ```
-pub fn mask(x: Int) -> Int []
-    todo("xxhash-nv.xxh32.mask")
+pub @tier(embedded)
+fn mask(x: Int) -> Int []
+    x & XXH32_WORD_MASK
 
 // `x` rotated LEFT by `n` bits, over 32, masked.
 //
@@ -123,8 +129,14 @@ pub fn mask(x: Int) -> Int []
 // fn main() [io]
 //     println("${xxh32.rotl(1, 31)}")                      // 2147483648
 // ```
-pub fn rotl(x: Int, n: Int) -> Int []
-    todo("xxhash-nv.xxh32.rotl")
+pub @tier(embedded)
+fn rotl(x: Int, n: Int) -> Int []
+    let v = x & XXH32_WORD_MASK
+    let k = n & 31
+    if k == 0
+        v
+    else
+        ((v << k) | (v >>> (32 - k))) & XXH32_WORD_MASK
 
 // One lane's round: `rotl(acc + input * PRIME_2, 13) * PRIME_1`.
 //
@@ -138,8 +150,9 @@ pub fn rotl(x: Int, n: Int) -> Int []
 // fn main() [io]
 //     println("${xxh32.round(0, 0) == 0}")                 // true
 // ```
-pub fn round(acc: Int, input: Int) -> Int []
-    todo("xxhash-nv.xxh32.round")
+pub @tier(embedded)
+fn round(acc: Int, input: Int) -> Int []
+    mul(rotl(acc + mul(input, XXH32_PRIME_2), 13), XXH32_PRIME_1)
 
 // The final mix: XOR-shift-multiply three times, which is what turns
 // the merged lanes into a digest with no structure left.
@@ -150,8 +163,14 @@ pub fn round(acc: Int, input: Int) -> Int []
 // fn main() [io]
 //     println("${xxh32.avalanche(0)}")                     // 0
 // ```
-pub fn avalanche(h: Int) -> Int []
-    todo("xxhash-nv.xxh32.avalanche")
+pub @tier(embedded)
+fn avalanche(h: Int) -> Int []
+    var x = h & XXH32_WORD_MASK
+    x = x ^ (x >>> 15)
+    x = mul(x, XXH32_PRIME_2)
+    x = x ^ (x >>> 13)
+    x = mul(x, XXH32_PRIME_3)
+    x ^ (x >>> 16)
 
 // ── Building and reading a state ─────────────────────────────────────
 
@@ -167,33 +186,53 @@ pub fn avalanche(h: Int) -> Int []
 // fn main() [io]
 //     println("${xxh32.seed(xxh32.start(7))}")             // 7
 // ```
-pub fn start(seed: Int) -> Xxh32State []
-    todo("xxhash-nv.xxh32.start")
+pub @tier(embedded)
+fn start(seed: Int) -> Xxh32State []
+    let s = seed & XXH32_WORD_MASK
+    Xxh32State { v: [mask(s + XXH32_PRIME_1 + XXH32_PRIME_2), mask(s + XXH32_PRIME_2), s, mask(s - XXH32_PRIME_1)],
+                 buf: [0, 0, 0, 0], buffered: 0, total: 0, seed: s }
 
 // Lane `i`, for `i` in 0 ..= 3.
-pub fn lane(st: Xxh32State, i: Int) -> Int []
-    todo("xxhash-nv.xxh32.lane")
+pub @tier(embedded)
+fn lane(st: Xxh32State, i: Int) -> Int []
+    if i < 0 or i >= XXH32_LANES
+        0
+    else
+        st.v[i]
 
 // The same state with lane `i` set.  For a caller resuming from a
 // checkpoint they stored.
-pub fn with_lane(st: Xxh32State, i: Int, v: Int) -> Xxh32State []
-    todo("xxhash-nv.xxh32.with_lane")
+pub @tier(embedded)
+fn with_lane(st: Xxh32State, i: Int, v: Int) -> Xxh32State []
+    if i < 0 or i >= XXH32_LANES
+        st
+    else
+        var r = st
+        r.set_v(i, v & XXH32_WORD_MASK)
+        r
 
 // Buffered byte `j`, for `j` in 0 ..= 15.
-pub fn buffer_byte(st: Xxh32State, j: Int) -> Int []
-    todo("xxhash-nv.xxh32.buffer_byte")
+pub @tier(embedded)
+fn buffer_byte(st: Xxh32State, j: Int) -> Int []
+    if j < 0 or j >= XXH32_STRIPE_BYTES
+        0
+    else
+        (st.buf[j / 4] >>> (8 * (j % 4))) & 0xFF
 
 // Bytes of the stripe buffer that hold input: 0 ..= 15.
-pub fn buffered(st: Xxh32State) -> Int []
-    todo("xxhash-nv.xxh32.buffered")
+pub @tier(embedded)
+fn buffered(st: Xxh32State) -> Int []
+    st.buffered
 
 // Every byte fed so far.
-pub fn total(st: Xxh32State) -> Int []
-    todo("xxhash-nv.xxh32.total")
+pub @tier(embedded)
+fn total(st: Xxh32State) -> Int []
+    st.total
 
 // The seed this state started from.
-pub fn seed(st: Xxh32State) -> Int []
-    todo("xxhash-nv.xxh32.seed")
+pub @tier(embedded)
+fn seed(st: Xxh32State) -> Int []
+    st.seed
 
 // ── The streaming hash, with no `Bytes` in it ────────────────────────
 
@@ -211,8 +250,15 @@ pub fn seed(st: Xxh32State) -> Int []
 // fn main() [io]
 //     println("${xxh32.total(xxh32.feed_byte(xxh32.start(0), 0x61))}")   // 1
 // ```
-pub fn feed_byte(st: Xxh32State, b: Int) -> Xxh32State []
-    todo("xxhash-nv.xxh32.feed_byte")
+pub @tier(embedded)
+fn feed_byte(st: Xxh32State, b: Int) -> Xxh32State []
+    var r = st
+    r.put(b)
+    if r.buffered == XXH32_STRIPE_BYTES
+        for i in 0..XXH32_LANES
+            r.set_v(i, round(r.v[i], r.buf[i]))
+        r.set_buffered(0)
+    r
 
 // The digest: the lanes merged, the length mixed in, the tail
 // consumed, and the avalanche.
@@ -233,8 +279,20 @@ pub fn feed_byte(st: Xxh32State, b: Int) -> Xxh32State []
 // fn main() [io]
 //     println("${xxh32.finish(xxh32.start(0))}")
 // ```
-pub fn finish(st: Xxh32State) -> Int []
-    todo("xxhash-nv.xxh32.finish")
+pub @tier(embedded)
+fn finish(st: Xxh32State) -> Int []
+    var h = 0
+    if st.total >= XXH32_STRIPE_BYTES
+        h = mask(rotl(st.v[0], 1) + rotl(st.v[1], 7) + rotl(st.v[2], 12) + rotl(st.v[3], 18))
+    else
+        h = mask(st.seed + XXH32_PRIME_5)
+    h = mask(h + (st.total & XXH32_WORD_MASK))
+    let words = st.buffered / 4
+    for k in 0..words
+        h = mul(rotl(h + mul(st.buf[k], XXH32_PRIME_3), 17), XXH32_PRIME_4)
+    for j in words * 4..st.buffered
+        h = mul(rotl(h + mul(buffer_byte(st, j), XXH32_PRIME_5), 11), XXH32_PRIME_1)
+    avalanche(h)
 
 // ── Reading a digest out ─────────────────────────────────────────────
 
@@ -254,5 +312,31 @@ pub fn finish(st: Xxh32State) -> Int []
 // fn main() [io]
 //     println("${xxh32.byte_of(0x11223344, 0)}")           // 68
 // ```
-pub fn byte_of(h: Int, i: Int) -> Int []
-    todo("xxhash-nv.xxh32.byte_of")
+pub @tier(embedded)
+fn byte_of(h: Int, i: Int) -> Int []
+    if i < 0 or i >= XXH32_DIGEST_BYTES
+        0
+    else
+        (h >>> (8 * i)) & 0xFF
+
+// The writers.  A `@value` struct is immutable outside a `var self`
+// method, so every change to the state is one of these.
+impl Xxh32State
+    // Sets accumulator `i`.
+    @tier(embedded)
+    fn set_v(var self, i: Int, v: Int)
+        self.v[i] = v
+
+    // Sets how many bytes of the stripe buffer hold input.
+    @tier(embedded)
+    fn set_buffered(var self, n: Int)
+        self.buffered = n
+
+    // Appends one byte to the stripe buffer and counts it.
+    @tier(embedded)
+    fn put(var self, b: Int)
+        let w = self.buffered / 4
+        let sh = 8 * (self.buffered % 4)
+        self.buf[w] = (self.buf[w] & ((0xFF << sh) ^ -1)) | ((b & 0xFF) << sh)
+        self.buffered = self.buffered + 1
+        self.total = self.total + 1

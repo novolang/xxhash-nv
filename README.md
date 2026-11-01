@@ -6,11 +6,6 @@ implementation and the written specification are at
 XXH32, XXH64 and XXH3 to novo-lang, as three separate algorithms with three
 separate entry points.
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is declared with
-its full signature, but every body is a `todo()` that panics when called. The
-package is published so its design can be reviewed and depended on before it is
-implemented. Version 0.1.0 will be the first working release.
-
 ## What xxHash is
 
 A non-cryptographic hash turns bytes into a fixed-width number, quickly. It
@@ -85,8 +80,7 @@ novo pkg build
 novo test
 ```
 
-Today `novo test` fails on purpose: every assertion reaches
-`not implemented: xxhash-nv.<module>.<fn>`.
+The tests are checked against the reference library; see "Test vectors".
 
 ## What the package contains
 
@@ -233,43 +227,32 @@ hash their format needs, and each can call this package instead.
 written definition and the source is the second check. For XXH3 the source is
 the definition.
 
-The tests carry:
+`tests/xxh_oracle_tests.nv` carries the digests of 44 inputs from 0 to 5000
+bytes, produced by calling the reference library, `libxxhash` 0.8.2, on the same
+bytes. For each input the line holds XXH32, XXH64, XXH3 at 64 bits unseeded,
+seeded and over a custom secret, and XXH3 at 128 bits unseeded, seeded and over
+a custom secret. The lengths sit on both sides of every path boundary: 0, 1 to
+3, 4 to 8, 9 to 16, 17 to 128, 129 to 240, and the long path with no, one and
+several scrambled blocks. A broader run, every length from 0 to 1099 under
+varying seeds and secrets, was compared against the same library while the code
+was written.
+
+The other suites carry:
 
 - **The digest of the empty input at all four widths**: `02cc5d05`,
   `ef46db3751d8e999`, `2d06800538d394c2` and
-  `99aa06d3014798d86001c324468d497f`. It is the value every port prints first,
-  and the one every implementation agrees on before it agrees on anything else.
-- Every structural property that does not need a table: that chunking the input
-  across a stripe boundary changes nothing, that the seed changes the answer,
-  that each of XXH3's four length paths is exercised, the two canonical byte
-  orders, and the exact calls the two consumer packages make.
+  `99aa06d3014798d86001c324468d497f`.
+- Every structural property: that chunking the input across a stripe boundary
+  changes nothing at any split point, that the seed changes the answer, that a
+  seed of zero is the unseeded hash, that each of XXH3's four length paths is
+  exercised, the two canonical byte orders, indexes outside a state, buffers too
+  small for a digest, secrets below 136 bytes, and the exact calls the two
+  consumer packages make.
 
-The reference's full sanity table is not transcribed here. It hashes prefixes of
-a 2367-byte buffer produced by its own generator, at several seeds, and runs to
-over a hundred values. A wrong constant in a test file is worse than a missing
-one, because it sends an implementer looking for a bug in correct code. The
-implementation generates that table from the reference binary and commits it as
-its first step.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| The twenty-seven size and prime constants | yes (they are constants) |
-| `xxh32.Xxh32State`, `xxh64.Xxh64State`, `xxh3.Xxh128`, `.Xxh3State`, `xxherr.XxhError` | declared |
-| `xxh32.mask`, `.rotl`, `.round`, `.avalanche` | no |
-| `xxh32.start`, `.feed_byte`, `.finish` and the six accessors | no |
-| `xxh32.byte_of` | no |
-| `xxh64.rotl`, `.round`, `.merge_lane`, `.avalanche` | no |
-| `xxh64.start`, `.feed_byte`, `.finish` and the six accessors | no |
-| `xxh64.byte_of`, `.low32` | no |
-| `xxh3.digest128`, `.digest_low`, `.digest_high`, `.digest_byte` | no |
-| `xxh3.acc_start`, `.acc_lane`, `.with_acc_lane`, `.stripe`, `.total` | no |
-| `xxh3.path_for`, `.check_secret` | no |
-| `xxhbytes`'s four XXH32 and four XXH64 functions | no |
-| `xxhbytes`'s six XXH3 functions | no |
-| `xxhbytes.text32`, `.text64`, `.text128` | no |
-| `xxherr.describe`, `XxhError.message` | no |
+A range that runs off the buffer (`hash32_range`, `feed64_range` and the
+others) hashes the bytes that exist: a negative offset starts at the front, an
+offset past the end and a negative length are empty ranges, and a length past
+the end stops at the end.
 
 ## Licence
 

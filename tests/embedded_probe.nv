@@ -34,14 +34,12 @@
 // than XXH32 while costing ~256 bytes more of state and secret.  A
 // device that wants a checksum wants `xxh32`, and the README says so.
 //
-// WHAT THE TIER ACTUALLY CHECKS AT 0.0.1 is narrower than it will be.
-// Every body under `src/` is a `todo()`, so what links today is the
-// SIGNATURES and the types — `Int` in and out, `@value` structs with
-// inline arrays, and no allocator anywhere in the shape.  There is no
-// arithmetic in the binary yet, so this probe does not prove the round
-// function is allocation-free; it proves that nothing in the shape of
-// the surface needs an allocator or a host.  Keeping it green once the
-// bodies land is a named cost of the implementation step.
+// WHAT THE TIER CHECKS.  Every function of `xxh32` and `xxh64` carries
+// `@tier(embedded)`, so a `Str`, a list, an unbounded loop or a call
+// into a module that is not on the surface is refused where it is
+// written.  The arithmetic is in the binary: the probe checks that the
+// round, the merge, the avalanche and the tail run on the device and
+// answer what the host answers.
 
 use xxh32
 use xxh64
@@ -146,17 +144,32 @@ fn score() -> Int
     if xxh64.byte_of(0x1122334455667788, 0) == 0x88
         n = n + 1
 
+    // The reference digests of "abc", so the device is checked against
+    // the published value and not only against itself.
+    var c = xxh32.start(0)
+    c = xxh32.feed_byte(c, 0x61)
+    c = xxh32.feed_byte(c, 0x62)
+    c = xxh32.feed_byte(c, 0x63)
+    if xxh32.finish(c) == 0x32d153ff
+        n = n + 1
+    var d = xxh64.start(0)
+    d = xxh64.feed_byte(d, 0x61)
+    d = xxh64.feed_byte(d, 0x62)
+    d = xxh64.feed_byte(d, 0x63)
+    if xxh64.finish(d) == 4952883123889572249
+        n = n + 1
+
     n
 
 @tier(rt)
 fn main() [hw, time]
     bsp.board.init()
-    // 37 is the number of checks in `score` on the path a linked build
+    // 39 is the number of checks in `score` on the path a linked build
     // takes.  The count is printed on a failure rather than only
     // compared, so a device that disagrees with the host says HOW MANY
     // it lost and a bisect has somewhere to start.
     let n = score()
-    if n == 37
+    if n == 39
         hal.uart.write("PASS: xxhash-embedded\n")
     else
         hal.uart.write("FAIL: xxhash-embedded\n")

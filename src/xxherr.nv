@@ -1,9 +1,6 @@
 // xxherr.nv — one error type, and it is short because a hash cannot
 // fail.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // XXH32 AND XXH64 HAVE NO ERRORS AT ALL, and neither of their modules
 // names this one: every input is a legal input and every state has a
 // digest.  Every arm below belongs to XXH3, which has a custom-secret
@@ -53,7 +50,13 @@ pub enum XxhError
 // ```
 impl Error for XxhError
     fn message(self) -> Str
-        todo("xxhash-nv.xxherr.XxhError.message")
+        match self
+            XxhSecretTooShort(got, least) =>
+                "xxhash: a secret of ${got} bytes is below the ${least} bytes XXH3 needs"
+            XxhOutputTooSmall(want, have) =>
+                "xxhash: the digest is ${want} bytes and the output buffer holds ${have}"
+            XxhSeedAndSecretBothGiven     =>
+                "xxhash: a seed and a secret were both given, and they are the same knob"
 
 // The same sentence as `message`, as a free function.
 //
@@ -64,4 +67,4 @@ impl Error for XxhError
 //     println(xxherr.describe(XxhOutputTooSmall(16, 8)))
 // ```
 pub fn describe(e: XxhError) -> Str []
-    todo("xxhash-nv.xxherr.describe")
+    e.message()
