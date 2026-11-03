@@ -28,6 +28,8 @@ XXH32, XXH64 and XXH3 at 64 and 128 bits, with a body for every function.
   at every width, seeded and over a secret; `tests/xxh_edges_tests.nv`;
   `tests/coverage.sh`.
 
+This release requires novo 0.23.0 or later.
+
 ## 0.0.2 — 2026-09-12
 
 ### Changed — The README is rewritten in plain technical-writer prose; no signature changed.
